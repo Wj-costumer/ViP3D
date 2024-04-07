@@ -34,7 +34,7 @@ pip install -r requirements.txt
 ```
 
 #### 5) Install mmdet3d
-```bash
+```bashpip install -r requirements.txt
 cd ~
 git clone https://github.com/open-mmlab/mmdetection3d.git
 cd mmdetection3d
@@ -91,6 +91,8 @@ The training stage requires ~ 17 GB GPU memory, and takes ~ 3 days for 24 epochs
 Run evaluation using the following command:
 ```bash
 PYTHONPATH=. python tools/test.py plugin/vip3d/configs/vip3d_resnet50_3frame.py work_dirs/vip3d_resnet50_3frame.1/epoch_24.pth --eval bbox
+
+python tools/test.py plugin/vip3d/configs/vip3d_resnet50_3frame.py ./ckpts/epoch_24.pth --eval bbox
 ```
 The checkpoint ```epoch_24.pth``` can be downloaded from [here](https://drive.google.com/drive/folders/18q2sQ-J-AxqeCO8FaAWKQ9Fi13PPv_MR?usp=drive_link).
 

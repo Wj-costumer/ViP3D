@@ -238,7 +238,8 @@ class PredictionEval:
                 assert self.prediction_infos[index]['timestamp'] > self.prediction_infos[index - 1]['timestamp']
 
             if sample_token not in self.sample_token_2_pred_agents:
-                break
+                # break
+                continue
 
             gt_agents: List[GTAgent] = get_gt_agents(self.prediction_infos, index)
             pred_agents: List[PredAgent] = self.sample_token_2_pred_agents[sample_token]

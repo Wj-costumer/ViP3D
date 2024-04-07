@@ -24,7 +24,7 @@ nus_attributes = ('cycle.with_rider', 'cycle.without_rider',
 
 def create_nuscenes_infos(root_path,
                           info_prefix,
-                          version='v1.0-trainval',
+                          version='v1.0-mini',
                           max_sweeps=10):
     """Create info file of nuscene dataset.
     Given the raw data, generate its related info file in pkl format.
@@ -48,8 +48,8 @@ def create_nuscenes_infos(root_path,
         train_scenes = splits.test
         val_scenes = []
     elif version == 'v1.0-mini':
-        train_scenes = splits.mini_train
-        val_scenes = splits.mini_val
+        train_scenes = splits.mini_train # ['scene-0061', 'scene-0553', 'scene-0655', 'scene-0757', 'scene-0796', 'scene-1077', 'scene-1094', 'scene-1100']
+        val_scenes = splits.mini_val # ['scene-0103', 'scene-0916']
     else:
         raise ValueError('unknown')
 
@@ -66,7 +66,7 @@ def create_nuscenes_infos(root_path,
     val_scenes = set([
         available_scenes[available_scene_names.index(s)]['token']
         for s in val_scenes
-    ])
+    ]) # {'325cef682f064c55a255f2625c533b75', 'fcbccedd61424f1b85dcbf8f897f9754'}
 
     test = 'test' in version
     if test:
@@ -161,6 +161,14 @@ def _fill_trainval_infos(nusc: NuScenes,
         cs_record = nusc.get('calibrated_sensor',
                              sd_rec['calibrated_sensor_token'])
         pose_record = nusc.get('ego_pose', sd_rec['ego_pose_token'])
+        '''
+            label: nan, score: nan, 
+            xyz: [18.41, 59.52, 0.77], wlh: [0.62, 0.67, 1.64], 
+            rot axis: [0.01, -0.02, 1.00], ang(degrees): 179.02, 
+            ang(rad): 3.12, vel: nan, nan, nan, 
+            name: human.pedestrian.adult, 
+            token: ef63a697930c4b20a6b9791f423351da
+        '''
         lidar_path, boxes, _ = nusc.get_sample_data(lidar_token)
 
         mmcv.check_file_exist(lidar_path)
@@ -178,10 +186,15 @@ def _fill_trainval_infos(nusc: NuScenes,
             'timestamp': sample['timestamp'],
         }
 
-        l2e_r = info['lidar2ego_rotation']
-        l2e_t = info['lidar2ego_translation']
+        l2e_r = info['lidar2ego_rotation'] # 四元数 [0.7077955119163518, -0.006492242056004365, 0.010646214713995808, -0.7063073142877817]
+        l2e_t = info['lidar2ego_translation'] # [0.943713, 0.0, 1.84023]
         e2g_r = info['ego2global_rotation']
         e2g_t = info['ego2global_translation']
+        '''
+            array([[-0.34555293,  0.93825799,  0.01628252],
+                   [-0.93833811, -0.34528031, -0.01740977],
+                   [-0.01071282, -0.0212945 ,  0.99971585]])
+        '''
         l2e_r_mat = Quaternion(l2e_r).rotation_matrix
         e2g_r_mat = Quaternion(e2g_r).rotation_matrix
 
@@ -224,7 +237,7 @@ def _fill_trainval_infos(nusc: NuScenes,
 
                     radar_info = obtain_sensor2top(nusc, radar_token, l2e_t, l2e_r_mat,
                                                 e2g_t, e2g_r_mat, radar_name)
-                    sweeps.append(radar_info)
+                    sweeps.append(radar_info) # unknown [radar_info same * 5]
 
             info['radars'].update({radar_name: sweeps})
 
@@ -242,15 +255,25 @@ def _fill_trainval_infos(nusc: NuScenes,
         info['sweeps'] = sweeps
         # obtain annotation
         if not test:
+            '''
+                {'token': 'ef63a697930c4b20a6b9791f423351da', 
+                'sample_token': 'ca9a282c9e77460f8360f564131a8af5', 
+                'instance_token': '6dd2cbf4c24b4caeb625035869bca7b5',
+                'visibility_token': '1', 'attribute_tokens': ['4d8821270b4a47e3a8a300cbec48188e'],
+                'translation': [373.256, 1130.419, 0.8], 'size': [0.621, 0.669, 1.642], 
+                'rotation': [0.9831098797903927, 0.0, 0.0, -0.18301629506281616], 
+                'prev': '', 'next': '7987617983634b119e383d8a29607fd7', 
+                'num_lidar_pts': 1, 'num_radar_pts': 0, 'category_name': 'human.pedestrian.adult'}
+            '''
             annotations = [
                 nusc.get('sample_annotation', token)
                 for token in sample['anns']
             ]
-            locs = np.array([b.center for b in boxes]).reshape(-1, 3)
-            dims = np.array([b.wlh for b in boxes]).reshape(-1, 3)
-            rots = np.array([b.orientation.yaw_pitch_roll[0]
+            locs = np.array([b.center for b in boxes]).reshape(-1, 3) # (x, y, z) array([18.414385  , 59.51602513,  0.76963457])
+            dims = np.array([b.wlh for b in boxes]).reshape(-1, 3) # (w, l, h) array([0.621, 0.669, 1.642])
+            rots = np.array([b.orientation.yaw_pitch_roll[0] # yaw angle? array([3.12413598])
                              for b in boxes]).reshape(-1, 1)
-            velocity = np.array(
+            velocity = np.array( # (v_x, v_y)??? array([-0.4660969 , -1.17024329])
                 [nusc.box_velocity(token)[:2] for token in sample['anns']])
             valid_flag = np.array(
                 [(anno['num_lidar_pts'] + anno['num_radar_pts']) > 0
@@ -277,13 +300,13 @@ def _fill_trainval_infos(nusc: NuScenes,
             instance_inds = [nusc.getind('instance', ann['instance_token']) for ann in annotations]
             # gt_boxes is in lidar coordinates
             # we need to convert rot to SECOND format.
-            gt_boxes = np.concatenate([locs, dims, -rots - np.pi / 2], axis=1)
+            gt_boxes = np.concatenate([locs, dims, -rots - np.pi / 2], axis=1) # shape (69, 7)
             assert len(gt_boxes) == len(
                 annotations), f'{len(gt_boxes)}, {len(annotations)}'
             info['gt_boxes'] = gt_boxes
             info['gt_names'] = names
             info['gt_velocity'] = velocity.reshape(-1, 2)
-            info['num_lidar_pts'] = np.array(
+            info['num_lidar_pts'] = np.array( # array([  1,   2,   5,   1, ...])
                 [a['num_lidar_pts'] for a in annotations])
             info['num_radar_pts'] = np.array(
                 [a['num_radar_pts'] for a in annotations])
@@ -353,7 +376,7 @@ def obtain_sensor2top(nusc,
     T -= e2g_t @ (np.linalg.inv(e2g_r_mat).T @ np.linalg.inv(l2e_r_mat).T
                   ) + l2e_t @ np.linalg.inv(l2e_r_mat).T
     sweep['sensor2lidar_rotation'] = R.T  # points @ R.T + T
-    sweep['sensor2lidar_translation'] = T
+    sweep['sensor2lidar_translation'] = T # array([-0.01613824,  0.43552529, -0.32067179])
     return sweep
 
 

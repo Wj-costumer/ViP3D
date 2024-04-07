@@ -25,7 +25,7 @@ input_modality = dict(
     use_external=False)
 
 model = dict(
-    type='ViP3D',
+    type='NM',
     use_grid_mask=True,  # use grid mask
     num_classes=7,
     num_query=300,
@@ -136,13 +136,21 @@ model = dict(
     agents_layer_0=True,
     add_branch=True,
     predictor=dict(
-        hidden_size=128,
-        laneGCN=True,
-        decoder=dict(
-            variety_loss=True,
-            variety_loss_prob=True,
-            hidden_size=128,
-        ),
+        future_steps = 12, # 预测未来帧数 default=12
+        num_modes = 6, # 预测多模态轨迹数
+        rotate=False, # 是否旋转到中心agent所在坐标系 
+        node_dim=128, # default = 128 和embedding维度一样 query_feat
+        edge_dim=128, # default = 128 query_pos
+        embed_dim=128, # default = 128 
+        num_heads=8, # default = 8
+        dropout=0.01,
+        num_temporal_layers=3, # default = 3
+        num_global_layers=3,
+        local_radius=5.0, # default = 5.0
+        parallel=False,
+        lr=0.01,
+        weight_decay=1e-3,
+        T_max=0,
     ),
     # model training and testing settings
     train_cfg=dict(

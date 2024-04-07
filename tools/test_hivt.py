@@ -1,10 +1,11 @@
+import os
+
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 import sys
 sys.path.append("/root/ViP3D") # ViP3D Project Path
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import argparse
 import mmcv
-import os
 import torch
 import warnings
 from mmcv import Config, DictAction
@@ -195,21 +196,22 @@ def main():
     # build the model and load checkpoint
     cfg.model.train_cfg = None
     model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
-    print("The number of parameters: ", count_parameters(model))
-    breakpoint()
+
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
-    checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
+    # checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
     if args.fuse_conv_bn:
         model = fuse_conv_bn(model)
     # old versions did not save class info in checkpoints, this walkaround is
     # for backward compatibility
-    if 'CLASSES' in checkpoint.get('meta', {}):
-        model.CLASSES = checkpoint['meta']['CLASSES']
-    else:
-        model.CLASSES = dataset.CLASSES
-    
+    # if 'CLASSES' in checkpoint.get('meta', {}):
+    #     model.CLASSES = checkpoint['meta']['CLASSES']
+    # else:
+    #     model.CLASSES = dataset.CLASSES
+    model.CLASSES = dataset.CLASSES
+    print("The number of model parameters: ", count_parameters(model))
+    breakpoint()
     if not distributed:
         model = MMDataParallel(model, device_ids=[0])
         outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
@@ -220,7 +222,6 @@ def main():
             broadcast_buffers=False)
         outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
-    breakpoint()
     rank, _ = get_dist_info()
     if rank == 0:
         if args.out:
