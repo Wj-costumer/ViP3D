@@ -1062,7 +1062,14 @@ class ViP3D(MVXTwoStageDetector):
             # Input 'self.track_idx_2_boxes' is in global, output 'tracked_boxes_list' is in ego
             tracked_scores, tracked_trajs, tracked_boxes_list, tracked_boxes_is_valid_list, categories = \
                 predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, index)
-
+            '''
+                gt_past_trajs: (29, 3, 2)
+                gt_past_trajs_is_valid: (29, 3)
+                gt_future_trajs: (29, 12, 2)
+                gt_future_trajs_is_valid: (29, 12)
+                labels: (31, 12, 2)
+                labels_is_valid: (31, 12)
+            '''
             gt_past_trajs, gt_past_trajs_is_valid, gt_future_trajs, gt_future_trajs_is_valid, gt_categories = \
                 predictor_utils.get_gt_past_future_trajs(instance_idx_2_labels)
 
@@ -1082,6 +1089,10 @@ class ViP3D(MVXTwoStageDetector):
                     output_embedding = self.output_embedding_forward(output_embedding)
 
                 if True:
+                    '''
+                        output_embedding.shape.torch.Size([31, 256])
+                        outputs['pred_outputs'].shape: (1, 31, 6, 12, 2)
+                    '''
                     loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
                                                       device=device,
                                                       labels=[labels],
