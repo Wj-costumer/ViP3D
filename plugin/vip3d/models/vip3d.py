@@ -4,10 +4,12 @@ import pickle
 import random
 from collections import defaultdict
 from copy import deepcopy
-
+import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import mmcv
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from mmdet.models import build_loss
@@ -25,7 +27,52 @@ from .radar_encoder import build_radar_encoder
 from .. import utils as predictor_utils
 from ..structures import Instances
 
+class_names = [
+    'car', 'truck', 'bus', 'trailer',
+    'motorcycle', 'bicycle', 'pedestrian',
+]
 
+def calculate_cube_corners(x, y, z, w, l, h):
+    # 计算立方体的所有八个角点的坐标
+    corners = []
+    
+    w /= 2.0
+    l /= 2.0
+    # 计算其他七个角点的坐标
+    corners.append([x + w, y + l, z + h / 2])
+    corners.append([x + w, y - l, z + h / 2 ])
+    corners.append([x - w, y - l, z + h / 2])
+    corners.append([x - w, y + l, z + h / 2])
+    corners.append([x + w, y + l, z + h + h / 2])
+    corners.append([x + w, y - l, z + h + h / 2])
+    corners.append([x - w, y - l, z + h + h / 2])
+    corners.append([x - w, y + l, z + h + h / 2])
+    
+    return np.array(corners) # default shape: 8 x 3
+    
+def draw_cube_on_image(image, corners):
+    # 创建一个空白图像，与输入图像具有相同的大小和通道数
+    output_image = np.copy(image)
+
+    # 定义立方体的边
+    edges = [
+        (0, 1), (1, 2), (2, 3), (3, 0),  # 底部边
+        (4, 5), (5, 6), (6, 7), (7, 4),  # 顶部边
+        (0, 4), (1, 5), (2, 6), (3, 7)   # 连接底部和顶部的边
+    ]
+
+    # 绘制立方体的边
+    for edge in edges:
+        start_point = tuple(corners[edge[0]].astype(int))
+        end_point = tuple(corners[edge[1]].astype(int))
+        output_image = cv2.line(output_image, start_point, end_point, (0, 255, 0), 2)
+
+    # 绘制立方体的顶点
+    for corner in corners:
+        corner = tuple(corner.astype(int))
+        output_image = cv2.circle(output_image, corner, 5, (0, 0, 255), -1)
+
+    return output_image
 class RuntimeTrackerBase(object):
     def __init__(self, score_thresh=None, filter_score_thresh=None, miss_tolerance=5):
         self.score_thresh = score_thresh
@@ -799,7 +846,7 @@ class ViP3D(MVXTwoStageDetector):
         return out_track_instances
 
     def forward_test(self,
-                     points=None,
+                     points=None, # points[0][0].shape = torch.Size([34752, 5])
                      img=None,
                      radar=None,
                      img_metas=None,
@@ -839,8 +886,24 @@ class ViP3D(MVXTwoStageDetector):
         l2g_t = l2g_t[0].unsqueeze(dim=1)[0]
 
         bs = img.size(0)
+        h = img.size(4) # img shape (928, 1600, 3)
+        w = img.size(5)
         num_frame = img.size(1)
 
+        # 恢复原始图像
+        mean = np.array([103.530, 116.280, 123.675])  # 均值
+        std = np.array([1.0, 1.0, 1.0])  # 标准差
+        # 读取图像
+        image1 = mmcv.imdenormalize(np.transpose(img[0, 0, 0, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
+        image2 = mmcv.imdenormalize(np.transpose(img[0, 0, 1, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
+        image3 = mmcv.imdenormalize(np.transpose(img[0, 0, 2, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
+        image4 = mmcv.imdenormalize(np.transpose(img[0, 0, 3, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
+        image5 = mmcv.imdenormalize(np.transpose(img[0, 0, 4, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
+        image6 = mmcv.imdenormalize(np.transpose(img[0, 0, 5, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
+        imgs = np.vstack((np.hstack((image2, image1, image3)), np.hstack((image5, image4, image6))))
+        cv2.imwrite("test.jpg", imgs)
+        images = [image1, image2, image3, image4, image5, image6]
+        
         timestamp = timestamp[0]
         device = img.device
 
@@ -880,7 +943,20 @@ class ViP3D(MVXTwoStageDetector):
         self.l2g_t = l2g_t
 
         # for bs 1;
-        lidar2img = img_metas[0]['lidar2img']  # [T, num_cam]
+        lidar2img = img_metas[0]['lidar2img']  # [T, num_cam] img_metas[0]['lidar2img'][0][0-5].shape = (4, 4)
+        
+        points_lidar = np.concatenate([points[0][0][:, :3].cpu().numpy(), np.ones((points[0][0].shape[0], 1))], axis = 1) # (34752, 4)
+       
+        # 保存将lidar points映射到图像上的结果
+        # for i in range(len(lidar2img[0])): # default = 6
+        #     lidar_to_image = lidar2img[0][i]
+        #     image_idx = images[i]
+        #     points_image = points_lidar @ lidar_to_image.T
+        #     points_image[:, :2] /= points_image[:, [2]] # x , y / z
+        #     for x, y in points_image[points_image[:, 2] > 0, :2]:
+        #         image_with_points = cv2.circle(image_idx, (int(x), int(y)), 2, (255, 0, 0), -1)
+        #     cv2.imwrite("image_%d_with_points.jpg"%i, image_with_points)
+        
         for i in range(num_frame):
             points_single = [p_[i] for p_ in points]
             img_single = torch.stack([img_[i] for img_ in img], dim=0)
@@ -910,7 +986,7 @@ class ViP3D(MVXTwoStageDetector):
 
         if mapping is not None:
             mapping = mapping[0]
-
+            
         if self.do_pred and results[0] is not None and mapping['valid_pred'] \
                 and (len(results[0]['track_ids']) > 0 and len(instance_idx_2_labels[0]) > 0):
             # only predict agent appeared at current index
@@ -933,15 +1009,56 @@ class ViP3D(MVXTwoStageDetector):
 
             if True:
                 # order of active_instances is different from results
+                """
+                [c_x, c_y, c_z-h*0.5, w, l, h, yaw, v_x, v_y] in lidar coordinate
+                boxes_3d[0] = [ 6.1542168 -7.0613632 -2.8129611  0.67718160
+                  0.74130636  1.8364302  3.1178775 -0.0069144219 1.1817145]
+                boxes_3d.shape = (31, 9)
+                """
                 boxes_3d = predictor_utils.to_numpy(results[0]['boxes_3d'].tensor)
                 output_embedding = results[0]['output_embedding']
                 track_scores = predictor_utils.to_numpy(results[0]['track_scores'])
                 track_ids = predictor_utils.to_numpy(results[0]['track_ids'])
                 track_labels = predictor_utils.to_numpy(results[0]['labels_3d'])
-
+            
             # 'boxes_3d' is in lidar, 'self.track_idx_2_boxes' is in global
             predictor_utils.update_track_idx_2_boxes(self.track_idx_2_boxes, track_ids, boxes_3d, mapping, index)
-
+            
+#             l2g = np.eye(4)
+#             l2g[:3, :3] = l2g_r2.cpu().numpy()
+#             l2g[:3, 3] = l2g_t2.cpu().numpy()
+#             g2l = np.linalg.inv(l2g)
+            
+#             for track_id, values in self.track_idx_2_boxes.items():
+#                 xyz = values[2].center.reshape(1, 3)
+#                 wlh = values[2].wlh
+#                 xyz_ = np.concatenate([xyz, np.ones((xyz.shape[0], 1))], axis = 1)
+#                 xyz_lidar = xyz_ @ g2l.T 
+#                 xyz_image = xyz_lidar @ lidar2img[0][0]
+#                 x = int(xyz_image[0, 0])
+#                 y = int(xyz_image[0, 1])
+#                 image3 = cv2.circle(image3, (x, y), 3, (255, 0, 0), -1)
+#                 cv2.imwrite("image3.jpg", image3)
+            # for cam_idx in range(6):
+            #     lidar_to_image = lidar2img[0][cam_idx]
+            #     image_idx = images[cam_idx]
+            #     for i in range(boxes_3d.shape[0]):
+            #         x, y, z, w, l, h = boxes_3d[i, :6]
+            #         corners = calculate_cube_corners(x, y, z, w, l, h) # 8 * 3
+            #         corners_lidar = np.concatenate([corners, np.ones((corners.shape[0], 1))], axis = 1) # 8 x 4
+            #         corners_image = corners_lidar @ lidar_to_image.T
+            #         corners_image[:, :2] /= corners_image[:, [2]] # x, y / z
+            #         if (corners_image[:, 2] > 0).all() == True: 
+            #             # 画3d_track_instance
+            #             image_idx = draw_cube_on_image(image_idx, corners_image[:, :2])
+            #             track_id = track_ids[i]
+            #             track_cls = class_names[track_labels[i]]
+            #             pos_1 = tuple(corners_image[6][:2].astype(int))
+            #             pos_2 = tuple(corners_image[5][:2].astype(int))
+            #             # image_idx = cv2.putText(image_idx, "track_id: " + str(track_id), pos_1, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            #             image_idx = cv2.putText(image_idx, track_cls, (pos_1[0] + 10, pos_1[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            #     cv2.imwrite("image_object_%d.jpg"%cam_idx, image_idx)
+            # breakpoint()   
             # Input 'self.track_idx_2_boxes' is in global, output 'tracked_boxes_list' is in ego
             tracked_scores, tracked_trajs, tracked_boxes_list, tracked_boxes_is_valid_list, categories = \
                 predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, index)
@@ -953,7 +1070,7 @@ class ViP3D(MVXTwoStageDetector):
                                                                                    gt_past_trajs, gt_past_trajs_is_valid,
                                                                                    gt_future_trajs, gt_future_trajs_is_valid,
                                                                                    future_frame_num)
-
+            breakpoint()
             if not valid_pred or len(tracked_boxes_list) == 0:
                 outputs = None
             else:
@@ -975,10 +1092,11 @@ class ViP3D(MVXTwoStageDetector):
 
             pred_dict = None
             if outputs is not None:
-                pred_outputs = outputs['pred_outputs'][0]
-                pred_probs = outputs['pred_probs'][0]
+                pred_outputs = outputs['pred_outputs'][0] # (31, 6, 12, 2)
+                pred_probs = outputs['pred_probs'][0] # (31, 6)
                 pred_outputs_single_traj = []
-
+                # -----predict trajectory visualize-----
+                
                 if self.relative_pred:
                     normalizers = [predictor_utils.get_normalizer(tracked_boxes_is_valid_list[j], tracked_boxes_list[j])
                                    for j in range(len(tracked_boxes_list))]
@@ -1049,6 +1167,7 @@ class ViP3D(MVXTwoStageDetector):
         bboxes[:, 2] = bboxes[:, 2] - bboxes[:, 5] * 0.5
         # (Pdb) img_metas[0]['box_type_3d'][0]
         # <class 'mmdet3d.core.bbox.structures.lidar_box3d.LiDARInstance3DBoxes'>
+
         bboxes = img_metas[0]['box_type_3d'][0](bboxes, 9)
         labels = bboxes_dict['labels']
         scores = bboxes_dict['scores']
