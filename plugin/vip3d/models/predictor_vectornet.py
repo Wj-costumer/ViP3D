@@ -189,18 +189,19 @@ class VectorNet(nn.Module):
                 device=None,
                 **kwargs,
                 ):
+        breakpoint()
         import time
         global starttime
         starttime = time.time()
 
-        lane_matrix = pred_matrix
+        lane_matrix = pred_matrix # n * 128
         polyline_spans = polyline_spans
         mapping = mapping
         if 'work_dir' in mapping and np.random.randint(20) == 0:
             print(f'work_dir {mapping["work_dir"]}')
         if np.random.randint(0, 50) == 0:
             print('index', mapping[0]['index'], device)
-        if agents is not None:
+        if agents is not None: # torch.Size([1, 45, 256])
             agents = [each[:, :128] for each in agents]
         # TODO(cyrushx): Can you explain the structure of polyline spans?
         # vectors of i_th element is matrix[polyline_spans[i]]
@@ -208,17 +209,17 @@ class VectorNet(nn.Module):
         batch_size = len(lane_matrix)
         # for i in range(batch_size):
         # polyline_spans[i] = [slice(polyline_span[0], polyline_span[1]) for polyline_span in polyline_spans[i]]
-
+        # [torch.Size([87, 128])] [torch.Size([42, 128])] [torch.Size([45, 128])]
         element_states_batch, lane_states_batch, agents = self.forward_encode_sub_graph(mapping, lane_matrix, polyline_spans, device, batch_size,
                                                                                         agents_batch=agents, **kwargs)
 
-        inputs, inputs_lengths = utils.merge_tensors(element_states_batch, device=device)
+        inputs, inputs_lengths = utils.merge_tensors(element_states_batch, device=device) # torch.Size([1, 87, 128])
         max_poly_num = max(inputs_lengths)
         attention_mask = torch.zeros([batch_size, max_poly_num, max_poly_num], device=device)
         for i, length in enumerate(inputs_lengths):
             attention_mask[i][:length][:length].fill_(1)
 
-        hidden_states = self.global_graph(inputs, attention_mask, mapping)
+        hidden_states = self.global_graph(inputs, attention_mask, mapping) # torch.Size([1, 87, 128])
 
         return self.decoder(mapping, batch_size, lane_states_batch, inputs, inputs_lengths, hidden_states, device,
                             labels, labels_is_valid, agents_indices, agents=agents, **kwargs)

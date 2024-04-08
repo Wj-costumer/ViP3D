@@ -574,7 +574,7 @@ class ViP3D(MVXTwoStageDetector):
         Returns:
             dict: Losses of different branches.
         """
-
+        breakpoint()
         # [T, 3, 3]
         l2g_r_mat = l2g_r_mat[0]
         # change to [T, 1, 3]
@@ -582,22 +582,22 @@ class ViP3D(MVXTwoStageDetector):
 
         timestamp = timestamp
 
-        bs = img.size(0)
-        num_frame = img.size(1)
+        bs = img.size(0) # default = 1
+        num_frame = img.size(1) # default = 3
         track_instances = self._generate_empty_tracks()
 
         # init gt instances!
         gt_instances_list = []
         for i in range(num_frame):
             gt_instances = Instances((1, 1))
-            boxes = gt_bboxes_3d[0][i].tensor.to(img.device)
-            # normalize gt bboxes here!
+            boxes = gt_bboxes_3d[0][i].tensor.to(img.device) # n * 9
+            # normalize gt bboxes here! 输入的gt_bbox_3d就是在lidar系下的原始检测box
             boxes = normalize_bbox(boxes, self.pc_range)
 
             gt_instances.boxes = boxes
             gt_instances.labels = gt_labels_3d[0][i]
             gt_instances.obj_ids = instance_inds[0][i]
-            gt_instances_list.append(gt_instances)
+            gt_instances_list.append(gt_instances) # length = 3 [Instances, ..., Instances]
 
         self.criterion.initialize_for_single_clip(gt_instances_list)
 
@@ -613,7 +613,7 @@ class ViP3D(MVXTwoStageDetector):
             lidar2img = img_metas[0]['lidar2img']  # [T, num_cam]
             for i in range(num_frame):
                 points_single = [p_[i] for p_ in points]
-                img_single = torch.stack([img_[i] for img_ in img], dim=0)
+                img_single = torch.stack([img_[i] for img_ in img], dim=0) # img.shape: torch.Size([1, 3, 6, 3, 928, 1600])
                 radar_single = torch.stack([radar_[i] for radar_ in radar], dim=0)
 
                 img_metas_single = deepcopy(img_metas)
@@ -710,7 +710,7 @@ class ViP3D(MVXTwoStageDetector):
                             track_scores.append(track_instances.scores[j].item())
                             track_ids.append(obj_id)
                             track_labels.append(all_track_labels[j])
-
+                breakpoint()
                 if len(agents_indices) > 0:
                     if True:
                         if True:
@@ -719,22 +719,22 @@ class ViP3D(MVXTwoStageDetector):
                             if self.add_branch:
                                 output_embedding = output_embedding[torch.tensor(agents_indices, dtype=torch.long, device=device)]
                                 _, _, past_boxes_list_in_lidar, _, _ = \
-                                    predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes_in_lidar, track_scores, track_ids, track_labels, mapping, num_frame - 1)
-                                query = self.add_branch_update_query(output_embedding, past_boxes_list_in_lidar[:, -1, :3], device)
+                                    predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes_in_lidar, track_scores, track_ids, track_labels, mapping, num_frame - 1) # (45, 3, 7)
+                                query = self.add_branch_update_query(output_embedding, past_boxes_list_in_lidar[:, -1, :3], device) # n * 256
                                 output_embedding = output_embedding + query
 
-                            output_embedding = self.output_embedding_forward(output_embedding)
+                            output_embedding = self.output_embedding_forward(output_embedding) # n * 256
 
                         if self.add_branch:
                             loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
                                                               device=device,
-                                                              labels=[np.array(labels_list)],
-                                                              labels_is_valid=[np.array(labels_is_valid_list)],
+                                                              labels=[np.array(labels_list)], # [(45, 12, 2)]
+                                                              labels_is_valid=[np.array(labels_is_valid_list)], # [(45, 12)]
                                                               # agents_indices=np.array(agents_indices, dtype=int),
                                                               **kwargs)
                         elif self.only_matched_query:
                             output_embedding = output_embedding[torch.tensor(agents_indices, dtype=torch.long, device=device)]
-                            loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
+                            loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0), # (1, 45, 6, 12, 2)
                                                               device=device,
                                                               labels=[np.array(labels_list)],
                                                               labels_is_valid=[np.array(labels_is_valid_list)],

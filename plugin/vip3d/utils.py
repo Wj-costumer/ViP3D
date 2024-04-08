@@ -19,13 +19,137 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from matplotlib.path import Path
 from matplotlib.pyplot import MultipleLocator
 from torch import Tensor
 from nuscenes.utils.data_classes import Box
 from pyquaternion import Quaternion
+from torch_geometric.data import Data
 
 eps = 1e-5
+
+class TemporalData(Data):
+    def __init__(self,
+                 x: Optional[torch.Tensor] = None,
+                 positions: Optional[torch.Tensor] = None,
+                 edge_index: Optional[torch.Tensor] = None,
+                 edge_attrs: Optional[List[torch.Tensor]] = None,
+                 y: Optional[torch.Tensor] = None,
+                 num_nodes: Optional[int] = None,
+                 padding_mask: Optional[torch.Tensor] = None,
+                 bos_mask: Optional[torch.Tensor] = None,
+                 rotate_angles: Optional[torch.Tensor] = None,
+                 lane_vectors: Optional[torch.Tensor] = None,
+                 is_intersections: Optional[torch.Tensor] = None,
+                 turn_directions: Optional[torch.Tensor] = None,
+                 traffic_controls: Optional[torch.Tensor] = None,
+                 lane_actor_index: Optional[torch.Tensor] = None,
+                 lane_actor_vectors: Optional[torch.Tensor] = None,
+                 seq_id: Optional[int] = None,
+                 **kwargs) -> None:
+        if x is None:
+            super(TemporalData, self).__init__()
+            return
+        super(TemporalData, self).__init__(x=x, positions=positions, edge_index=edge_index, y=y, num_nodes=num_nodes,
+                                           padding_mask=padding_mask, bos_mask=bos_mask, rotate_angles=rotate_angles,
+                                           lane_vectors=lane_vectors, is_intersections=is_intersections,
+                                           turn_directions=turn_directions, traffic_controls=traffic_controls,
+                                           lane_actor_index=lane_actor_index, lane_actor_vectors=lane_actor_vectors,
+                                           seq_id=seq_id, **kwargs)
+        if edge_attrs is not None:
+            for t in range(self.x.size(1)):
+                self[f'edge_attr_{t}'] = edge_attrs[t]
+
+    def __inc__(self, key, value):
+        if key == 'lane_actor_index':
+            return torch.tensor([[self['lane_vectors'].size(0)], [self.num_nodes]])
+        else:
+            return super().__inc__(key, value)
+
+
+class DistanceDropEdge(object):
+    def __init__(self, max_distance: Optional[float] = None) -> None:
+        self.max_distance = max_distance
+
+    def __call__(self,
+                 edge_index: torch.Tensor,
+                 edge_attr: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.max_distance is None:
+            return edge_index, edge_attr
+        row, col = edge_index
+        mask = torch.norm(edge_attr, p=2, dim=-1) < self.max_distance
+        edge_index = torch.stack([row[mask], col[mask]], dim=0)
+        edge_attr = edge_attr[mask]
+        return edge_index, edge_attr
+
+
+def init_weights(m: nn.Module) -> None:
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+        fan_in = m.in_channels / m.groups
+        fan_out = m.out_channels / m.groups
+        bound = (6.0 / (fan_in + fan_out)) ** 0.5
+        nn.init.uniform_(m.weight, -bound, bound)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.Embedding):
+        nn.init.normal_(m.weight, mean=0.0, std=0.02)
+    elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+        nn.init.ones_(m.weight)
+        nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.LayerNorm):
+        nn.init.ones_(m.weight)
+        nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.MultiheadAttention):
+        if m.in_proj_weight is not None:
+            fan_in = m.embed_dim
+            fan_out = m.embed_dim
+            bound = (6.0 / (fan_in + fan_out)) ** 0.5
+            nn.init.uniform_(m.in_proj_weight, -bound, bound)
+        else:
+            nn.init.xavier_uniform_(m.q_proj_weight)
+            nn.init.xavier_uniform_(m.k_proj_weight)
+            nn.init.xavier_uniform_(m.v_proj_weight)
+        if m.in_proj_bias is not None:
+            nn.init.zeros_(m.in_proj_bias)
+        nn.init.xavier_uniform_(m.out_proj.weight)
+        if m.out_proj.bias is not None:
+            nn.init.zeros_(m.out_proj.bias)
+        if m.bias_k is not None:
+            nn.init.normal_(m.bias_k, mean=0.0, std=0.02)
+        if m.bias_v is not None:
+            nn.init.normal_(m.bias_v, mean=0.0, std=0.02)
+    elif isinstance(m, nn.LSTM):
+        for name, param in m.named_parameters():
+            if 'weight_ih' in name:
+                for ih in param.chunk(4, 0):
+                    nn.init.xavier_uniform_(ih)
+            elif 'weight_hh' in name:
+                for hh in param.chunk(4, 0):
+                    nn.init.orthogonal_(hh)
+            elif 'weight_hr' in name:
+                nn.init.xavier_uniform_(param)
+            elif 'bias_ih' in name:
+                nn.init.zeros_(param)
+            elif 'bias_hh' in name:
+                nn.init.zeros_(param)
+                nn.init.ones_(param.chunk(4, 0)[1])
+    elif isinstance(m, nn.GRU):
+        for name, param in m.named_parameters():
+            if 'weight_ih' in name:
+                for ih in param.chunk(3, 0):
+                    nn.init.xavier_uniform_(ih)
+            elif 'weight_hh' in name:
+                for hh in param.chunk(3, 0):
+                    nn.init.orthogonal_(hh)
+            elif 'bias_ih' in name:
+                nn.init.zeros_(param)
+            elif 'bias_hh' in name:
+                nn.init.zeros_(param)
 
 
 def get_dis(points: np.ndarray, point_label):
@@ -361,7 +485,9 @@ def get_argmin_traj(gt_trajs, gt_trajs_is_valid, pred_traj, pred_traj_is_valid, 
         valid = gt_trajs_is_valid[:, -1] > eps  # [n]
     else:
         valid = np.sum(gt_trajs_is_valid, axis=-1) > eps  # [n]
-
+    """
+        (array([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28]),)
+    """
     nonzero = np.nonzero(valid)  # [m]
     assert isinstance(nonzero, tuple)
 
@@ -528,7 +654,7 @@ def extract_from_track_idx_2_boxes(track_idx_2_boxes, track_scores, track_ids, t
         category = []
         score = []
 
-        for i_index in range(index - 2, index + 1):
+        for i_index in range(index - 2, index + 1): # (0-3)
             if i_index in track_idx_2_boxes[track_idx]:
                 # TODO
                 # point[2] += box[5] * 0.5
@@ -581,9 +707,9 @@ def get_labels_for_tracked_trajs(tracked_trajs, past_trajs_is_valid,
     labels = []
     labels_is_valid = []
     for j in range(len(tracked_trajs)):
-        _, argmin = get_argmin_traj(gt_past_trajs, gt_past_trajs_is_valid, tracked_trajs[j], past_trajs_is_valid[j])
+        _, argmin = get_argmin_traj(gt_past_trajs, gt_past_trajs_is_valid, tracked_trajs[j], past_trajs_is_valid[j]) # _, 15
         if argmin is not None:
-            labels.append(gt_future_trajs[argmin])
+            labels.append(gt_future_trajs[argmin]) # 把与tracked_trajs距离最近的gt_past_trajs对应的未来真值轨迹作为预测轨迹的针织
             labels_is_valid.append(gt_future_trajs_is_valid[argmin])
         else:
             labels.append(np.zeros((future_frame_num, 2)))
@@ -591,9 +717,9 @@ def get_labels_for_tracked_trajs(tracked_trajs, past_trajs_is_valid,
     return np.array(labels), np.array(labels_is_valid)
 
 
-def get_normalizer(past_traj_is_valid, past_boxes):
+def get_normalizer(past_traj_is_valid, past_boxes): # past_boxes.shape = his_frame * 7 
     last_valid_box = None
-    for j in range(len(past_traj_is_valid))[::-1]:
+    for j in range(len(past_traj_is_valid))[::-1]: # 从最后一个3d_box开始
         if past_traj_is_valid[j]:
             last_valid_box = past_boxes[j]
             break
@@ -611,6 +737,15 @@ def check_code(msg):
 def update_track_idx_2_boxes(track_idx_2_boxes, track_ids, boxes_3d, mapping, index):
     assert len(track_ids) == len(boxes_3d)
     for j, track_idx in enumerate(track_ids):
+        """
+        dict_items([
+            (7, {2: label: nan, score: nan, xyz: [598.96, 1641.21, -0.63], wlh: [0.68, 0.74, 1.84], rot axis: [0.06, 0.11, -0.99], ang(degrees): 30.23, ang(rad): 0.53, vel: nan, nan, nan, name: None, token: None}),
+            (18, {2: label: nan, score: nan, xyz: [590.61, 1652.62, -0.42], wlh: [1.98, 4.72, 1.69], rot axis: [0.06, 0.11, -0.99], ang(degrees): 29.83, ang(rad): 0.52, vel: nan, nan, nan, name: None, token: None}),
+            (19, {2: label: nan, score: nan, xyz: [620.77, 1625.49, -1.52], wlh: [0.64, 0.74, 1.79], rot axis: [0.03, -0.01, 1.00], ang(degrees): 142.89, ang(rad): 2.49, vel: nan, nan, nan, name: None, token: None}),
+            (8, {2: label: nan, score: nan, xyz: [618.31, 1650.01, -1.10], wlh: [0.68, 0.78, 1.77], rot axis: [0.03, -0.02, 1.00], ang(degrees): 153.20, ang(rad): 2.67, vel: nan, nan, nan, name: None, token: None}),
+            ...
+            ])
+        """
         track_idx_2_boxes[track_idx][index] = lidar_to_global(boxes_3d[j], **mapping)
 
 
