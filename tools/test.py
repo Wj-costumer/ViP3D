@@ -1,7 +1,5 @@
 import sys
 sys.path.append("/root/ViP3D") # ViP3D Project Path
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 import argparse
 import mmcv
 import os
@@ -196,7 +194,7 @@ def main():
     cfg.model.train_cfg = None
     model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
     print("The number of parameters: ", count_parameters(model))
-    breakpoint()
+#     breakpoint()
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
@@ -220,7 +218,7 @@ def main():
             broadcast_buffers=False)
         outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
-    breakpoint()
+#     breakpoint()
     rank, _ = get_dist_info()
     if rank == 0:
         if args.out:

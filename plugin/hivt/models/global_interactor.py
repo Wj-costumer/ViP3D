@@ -56,7 +56,8 @@ class GlobalInteractor(nn.Module):
                 data: TemporalData,
                 local_embed: torch.Tensor) -> torch.Tensor:
         # edge_index, _ = subgraph(subset=~data['padding_mask'][:, self.historical_steps - 1], edge_index=data.edge_index)
-        edge_index = data.edge_index
+        device = data.x.device
+        edge_index = data.edge_index.to(device)
         edge_dim = data.x.shape[1] // 2
         rel_pos = data.x[edge_index[0], :edge_dim] - data.x[edge_index[1], :edge_dim]
         rel_embed = self.rel_embed(rel_pos)

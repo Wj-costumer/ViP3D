@@ -1,5 +1,6 @@
 from __future__ import division
-
+import sys
+sys.path.append("/root/ViP3D") # ViP3D Project Path
 import argparse
 import copy
 import mmcv

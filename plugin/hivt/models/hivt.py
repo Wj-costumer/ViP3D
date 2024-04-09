@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import pytorch_lightning as pl
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,7 +25,7 @@ from .global_interactor import GlobalInteractor
 from .local_encoder import LocalEncoder
 from .decoder import MLPDecoder
 from ..utils import TemporalData
-
+from .predictor_decoder import Decoder, DecoderResCat
 
 class HiVT(nn.Module):
     def __init__(self,
@@ -44,7 +44,8 @@ class HiVT(nn.Module):
                  lr: float,
                  weight_decay: float,
                  T_max: int,
-                 **kwargs) -> None:
+                 decoder=None
+                 ) -> None:
         super(HiVT, self).__init__()
         self.future_steps = future_steps
         self.num_modes = num_modes
@@ -69,19 +70,21 @@ class HiVT(nn.Module):
                                                   num_layers=num_global_layers,
                                                   dropout=dropout,
                                                   rotate=rotate)
-        self.decoder = MLPDecoder(local_channels=embed_dim,
-                                  global_channels=embed_dim,
-                                  future_steps=future_steps,
-                                  num_modes=num_modes,
-                                  uncertain=True)
+#         self.decoder = MLPDecoder(local_channels=embed_dim,
+#                                   global_channels=embed_dim,
+#                                   future_steps=future_steps,
+#                                   num_modes=num_modes,
+#                                   uncertain=True)
+        self.decoder = Decoder(self, **decoder)
+    
         self.reg_loss = LaplaceNLLLoss(reduction='mean')
         self.cls_loss = SoftTargetCrossEntropyLoss(reduction='mean')
 
-        self.minADE = ADE()
-        self.minFDE = FDE()
-        self.minMR = MR()
+        self.minADE = None#ADE()
+        self.minFDE = None#FDE()
+        self.minMR = None#MR()
 
-    def forward(self, data: TemporalData):
+    def forward(self, data: TemporalData, **kwargs):
         if self.rotate:
             rotate_mat = torch.empty(data.num_nodes, 2, 2, device=self.device)
             sin_vals = torch.sin(data['rotate_angles'])
@@ -98,8 +101,17 @@ class HiVT(nn.Module):
 
         local_embed = self.local_encoder(data=data)
         global_embed = self.global_interactor(data=data, local_embed=local_embed)
-        y_hat, pi = self.decoder(local_embed=local_embed, global_embed=global_embed)
-        return y_hat, pi
+        # breakpoint()
+        return self.decoder(batch_size=1, 
+                            inputs=None, 
+                            inputs_lengths=None, 
+                            hidden_states=global_embed, 
+                            device=global_embed.device,
+                            labels=data.y, 
+                            labels_is_valid=data.padding_mask, 
+                            agents=local_embed,
+                            agents_indices=None, 
+                            **kwargs)
 
     def training_step(self, data, batch_idx):
         y_hat, pi = self(data)

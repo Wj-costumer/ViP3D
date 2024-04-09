@@ -237,7 +237,7 @@ class NM(MVXTwoStageDetector):
                 self.agents_layer_mlp_0 = nn.Sequential(*[predictor_lib.MLP(256, 256) for _ in range(agents_layer_0_num)])
 
         self.only_matched_query = only_matched_query
-        self.do_pred = False
+       
         if self.do_pred:
             self.predictor = HiVT(**predictor)
             self.empty_linear = nn.Linear(embed_dims, embed_dims)
@@ -632,7 +632,6 @@ class NM(MVXTwoStageDetector):
                     time_delta = timestamp[i + 1] - timestamp[i]
 
                 is_last_frame = i == num_frame - 1
-
                 if True:
                     track_instances = self._forward_single(points_single, img_single,
                                                            radar_single, img_metas_single,
@@ -663,7 +662,7 @@ class NM(MVXTwoStageDetector):
                     if i == 0:
                         self.track_idx_2_boxes = defaultdict(dict)
                         self.track_idx_2_boxes_in_lidar = defaultdict(dict)
-
+          
                     # mapping must use last mapping
                     r_index_2_rotation_and_transform = mapping['r_index_2_rotation_and_transform']
                     if valid_pred:
@@ -727,29 +726,44 @@ class NM(MVXTwoStageDetector):
                                 output_embedding = output_embedding + query
 
                             output_embedding = self.output_embedding_forward(output_embedding)
-
+                        
+                        num_agent = output_embedding.shape[0]
+                        pred_data = TemporalData(
+                            x = output_embedding,
+                            positions=None,
+                            edge_index= torch.LongTensor(list(permutations(range(num_agent), 2))).t().contiguous(),
+                            y=[np.array(labels_list)],
+                            num_nodes=num_agent,
+                            padding_mask=[np.array(labels_is_valid_list)],
+                            bos_mask=None,
+                            rotate_angles=None,
+                            lane_vectors=None,
+                            is_intersections=None,
+                            turn_directions=None,
+                        )
                         if self.add_branch:
-                            loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
-                                                              device=device,
-                                                              labels=[np.array(labels_list)],
-                                                              labels_is_valid=[np.array(labels_is_valid_list)],
-                                                              # agents_indices=np.array(agents_indices, dtype=int),
-                                                              **kwargs)
-                        elif self.only_matched_query:
-                            output_embedding = output_embedding[torch.tensor(agents_indices, dtype=torch.long, device=device)]
-                            loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
-                                                              device=device,
-                                                              labels=[np.array(labels_list)],
-                                                              labels_is_valid=[np.array(labels_is_valid_list)],
-                                                              # agents_indices=np.array(agents_indices, dtype=int),
-                                                              **kwargs)
-                        else:
-                            loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
-                                                              device=device,
-                                                              labels=[np.array(labels_list)],
-                                                              labels_is_valid=[np.array(labels_is_valid_list)],
-                                                              agents_indices=np.array(agents_indices, dtype=int),
-                                                              **kwargs)
+#                             loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
+#                                                               device=device,
+#                                                               labels=[np.array(labels_list)],
+#                                                               labels_is_valid=[np.array(labels_is_valid_list)],
+#                                                               # agents_indices=np.array(agents_indices, dtype=int),
+#                                                               **kwargs)
+                            loss, outputs, _ = self.predictor(pred_data, **kwargs)
+#                         elif self.only_matched_query:
+#                             output_embedding = output_embedding[torch.tensor(agents_indices, dtype=torch.long, device=device)]
+#                             loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
+#                                                               device=device,
+#                                                               labels=[np.array(labels_list)],
+#                                                               labels_is_valid=[np.array(labels_is_valid_list)],
+#                                                               # agents_indices=np.array(agents_indices, dtype=int),
+#                                                               **kwargs)
+#                         else:
+#                             loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
+#                                                               device=device,
+#                                                               labels=[np.array(labels_list)],
+#                                                               labels_is_valid=[np.array(labels_is_valid_list)],
+#                                                               agents_indices=np.array(agents_indices, dtype=int),
+#                                                               **kwargs)
                 else:
                     loss = None
 
@@ -893,20 +907,6 @@ class NM(MVXTwoStageDetector):
         w = img.size(5)
         num_frame = img.size(1)
 
-        # 恢复原始图像
-        mean = np.array([103.530, 116.280, 123.675])  # 均值
-        std = np.array([1.0, 1.0, 1.0])  # 标准差
-        # 读取图像
-        image1 = mmcv.imdenormalize(np.transpose(img[0, 0, 0, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image2 = mmcv.imdenormalize(np.transpose(img[0, 0, 1, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image3 = mmcv.imdenormalize(np.transpose(img[0, 0, 2, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image4 = mmcv.imdenormalize(np.transpose(img[0, 0, 3, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image5 = mmcv.imdenormalize(np.transpose(img[0, 0, 4, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image6 = mmcv.imdenormalize(np.transpose(img[0, 0, 5, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        imgs = np.vstack((np.hstack((image2, image1, image3)), np.hstack((image5, image4, image6))))
-        cv2.imwrite("test.jpg", imgs)
-        images = [image1, image2, image3, image4, image5, image6]
-        
         timestamp = timestamp[0]
         device = img.device
 
@@ -947,18 +947,6 @@ class NM(MVXTwoStageDetector):
 
         # for bs 1;
         lidar2img = img_metas[0]['lidar2img']  # [T, num_cam] img_metas[0]['lidar2img'][0][0-5].shape = (4, 4)
-        
-        points_lidar = np.concatenate([points[0][0][:, :3].cpu().numpy(), np.ones((points[0][0].shape[0], 1))], axis = 1) # (34752, 4)
-       
-        # 保存将lidar points映射到图像上的结果
-        # for i in range(len(lidar2img[0])): # default = 6
-        #     lidar_to_image = lidar2img[0][i]
-        #     image_idx = images[i]
-        #     points_image = points_lidar @ lidar_to_image.T
-        #     points_image[:, :2] /= points_image[:, [2]] # x , y / z
-        #     for x, y in points_image[points_image[:, 2] > 0, :2]:
-        #         image_with_points = cv2.circle(image_idx, (int(x), int(y)), 2, (255, 0, 0), -1)
-        #     cv2.imwrite("image_%d_with_points.jpg"%i, image_with_points)
         
         for i in range(num_frame):
             points_single = [p_[i] for p_ in points]
@@ -1080,7 +1068,6 @@ class NM(MVXTwoStageDetector):
                                                                                    gt_past_trajs, gt_past_trajs_is_valid,
                                                                                    gt_future_trajs, gt_future_trajs_is_valid,
                                                                                    future_frame_num)
-            breakpoint()
             if not valid_pred or len(tracked_boxes_list) == 0:
                 outputs = None
             else:
@@ -1111,7 +1098,6 @@ class NM(MVXTwoStageDetector):
                         turn_directions=None,
                     )
                     outputs, _ = self.predictor(pred_data)
-                    breakpoint()
                     # loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
                     #                                   device=device,
                     #                                   labels=[labels],

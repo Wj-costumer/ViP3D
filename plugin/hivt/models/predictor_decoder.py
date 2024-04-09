@@ -84,11 +84,11 @@ class Decoder(nn.Module):
         self.reduce_prob_of = reduce_prob_of
         self.rebalance_prob = rebalance_prob
 
-    def forward_variety_loss(self, mapping: List[Dict], hidden_states: Tensor, batch_size, inputs: Tensor,
-                             inputs_lengths: List[int], labels_is_valid: List[np.ndarray], loss: Tensor,
-                             DE: np.ndarray, device, labels: List[np.ndarray],
-                             agents_indices=None,
-                             agents=None):
+    def forward_variety_loss(self, hidden_states: Tensor, batch_size, inputs: Tensor,
+                            inputs_lengths: List[int], labels_is_valid: List[np.ndarray], loss: Tensor,
+                            DE: np.ndarray, device, labels: List[np.ndarray],
+                            agents: Tensor,
+                            agents_indices=None):
         """
         :param hidden_states: hidden states of all elements after encoding by global graph (shape [batch_size, -1, hidden_size])
         :param inputs: hidden states of all elements before encoding by global graph (shape [batch_size, 'element num', hidden_size])
@@ -106,7 +106,7 @@ class Decoder(nn.Module):
             else:
                 hidden_states = hidden_states[:, :agent_num, :]
 
-            outputs = self.variety_loss_decoder(hidden_states)
+            outputs = self.variety_loss_decoder(hidden_states[:, -1, :, :])
 
             if True:
                 if self.train_pred_probs_only:
@@ -133,22 +133,22 @@ class Decoder(nn.Module):
                         if labels_is_valid[i][agent_idx, j]:
                             last_valid_index = j
                             break
-                    if self.K_is_1:
-                        argmin = 0
-                        if self.K_is_1_constant:
-                            past_boxes_list = mapping[i]['past_boxes_list']
-                            assert len(past_boxes_list) == agent_num
-                            past_boxes = past_boxes_list[agent_idx]
-                            if utils.get_dis_point2point(past_boxes[1, :2]) > utils.eps:
-                                dis = utils.get_dis_point2point(past_boxes[1, :2], past_boxes[2, :2])
-                                for k in range(12):
-                                    outputs[i, agent_idx, 0, k, 0] = dis * (k + 1)
-                                    outputs[i, agent_idx, 0, k, 1] = 0.
+                    # if self.K_is_1:
+                    #     argmin = 0
+                    #     if self.K_is_1_constant:
+                    #         past_boxes_list = mapping[i]['past_boxes_list']
+                    #         assert len(past_boxes_list) == agent_num
+                    #         past_boxes = past_boxes_list[agent_idx]
+                    #         if utils.get_dis_point2point(past_boxes[1, :2]) > utils.eps:
+                    #             dis = utils.get_dis_point2point(past_boxes[1, :2], past_boxes[2, :2])
+                    #             for k in range(12):
+                    #                 outputs[i, agent_idx, 0, k, 0] = dis * (k + 1)
+                    #                 outputs[i, agent_idx, 0, k, 1] = 0.
 
-                                # outputs[i, agent_idx, 0] = torch.tensor([], , device=device)
+                    #             # outputs[i, agent_idx, 0] = torch.tensor([], , device=device)
 
-                    else:
-                        argmin = np.argmin(utils.get_dis_point_2_points(gt_points[last_valid_index], utils.to_numpy(outputs[i, agent_idx, :, last_valid_index, :])))
+                    # else:
+                    argmin = np.argmin(utils.get_dis_point_2_points(gt_points[last_valid_index], utils.to_numpy(outputs[i, agent_idx, :, last_valid_index, :])))
 
                     # argmin = utils.argmin_traj(labels[i][agent_idx], labels_is_valid[i][agent_idx], utils.to_numpy(outputs[i, agent_idx]))
                     loss_ = F.smooth_l1_loss(outputs[i, agent_idx, argmin],
@@ -196,21 +196,20 @@ class Decoder(nn.Module):
             pred_outputs=utils.to_numpy(outputs),
             pred_probs=utils.to_numpy(pred_probs),
         )
+   
         return loss.mean(), results, None
 
     def forward(self,
-                mapping: List[Dict],
+                # mapping: List[Dict],
                 batch_size,
-                lane_states_batch: List[Tensor],
                 inputs: Tensor,
                 inputs_lengths: List[int],
                 hidden_states: Tensor,
                 device,
                 labels,
                 labels_is_valid,
+                agents,
                 agents_indices=None,
-                agents=None,
-                normalizers=None,
                 **kwargs,
                 ):
         """
@@ -225,13 +224,13 @@ class Decoder(nn.Module):
         if self.variety_loss:
             if self.rebalance_prob:
                 with torch.no_grad():
-                    return self.forward_variety_loss(mapping, hidden_states, batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
-                                                     agents_indices=agents_indices, agents=agents)
+                    return self.forward_variety_loss(hidden_states.unsqueeze(0), batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
+                                                    agents=[agents], agents_indices=agents_indices)
             else:
-                return self.forward_variety_loss(mapping, hidden_states, batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
-                                                 agents_indices=agents_indices, agents=agents)
-        elif self.dense_decoding:
-            return self.forward_dense_decoding(mapping, hidden_states, batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
-                                               agents_indices=agents_indices, agents=agents)
+                return self.forward_variety_loss(hidden_states.unsqueeze(0), batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
+                                                 agents=[agents], agents_indices=agents_indices)
+        # elif self.dense_decoding:
+        #     return self.forward_dense_decoding(mapping, hidden_states, batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
+        #                                        agents_indices=agents_indices, agents=agents)
         else:
             assert False

@@ -110,8 +110,8 @@ class AAEncoder(MessagePassing):
                 edge_index: Adj,
                 edge_attr: torch.Tensor,
                 size: Size = None) -> torch.Tensor:
-        breakpoint()
         center_embed = self.center_embed(x) # [n, embed_dim]
+        edge_index = edge_index.to(center_embed.device)
         center_embed = center_embed + self._mha_block(self.norm1(center_embed), x, edge_index, edge_attr,
                                                       size)
         center_embed = center_embed + self._ff_block(self.norm2(center_embed))
