@@ -34,12 +34,12 @@ pip install -r requirements.txt
 ```
 
 #### 5) Install mmdet3d
-```bashpip install -r requirements.txt
+```bash
 cd ~
 git clone https://github.com/open-mmlab/mmdetection3d.git
 cd mmdetection3d
 git checkout v0.17.1 # Other versions may not be compatible.
-python setup.py install
+python setup.py install / pip install -e .
 pip install -r requirements/runtime.txt  # Install packages for mmdet3d
 ```
 
@@ -83,6 +83,7 @@ python tools/data_converter/nusc_tracking.py
 Train ViP3D using 3 historical frames and the ResNet50 backbone. It will load a pre-trained detector for weight initialization. Suppose the detector is at ```ckpts/detr3d_resnet50.pth```. It can be downloaded from [here](https://drive.google.com/drive/folders/18q2sQ-J-AxqeCO8FaAWKQ9Fi13PPv_MR?usp=drive_link).
 ```bash
 bash tools/dist_train.sh plugin/configs/vip3d_resnet50_3frame.py 8 --work-dir=work_dirs/vip3d_resnet50_3frame.1
+python tools/train.py plugin/hivt/configs/hivt_resnet50_3frame.py --work-dir=hivt_results.1 --gpus=1 
 ```
 The training stage requires ~ 17 GB GPU memory, and takes ~ 3 days for 24 epochs on 8× 3090 GPUS.
 
