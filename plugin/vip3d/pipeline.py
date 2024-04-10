@@ -122,6 +122,7 @@ class InstanceRangeFilter(object):
         """
         gt_bboxes_3d = input_dict['gt_bboxes_3d']
         gt_labels_3d = input_dict['gt_labels_3d']
+        attr_labels = input_dict['attr_labels']
         instance_inds = input_dict['ann_info']['instance_inds']
         mask = gt_bboxes_3d.in_range_bev(self.bev_range)
         gt_bboxes_3d = gt_bboxes_3d[mask]
@@ -130,12 +131,14 @@ class InstanceRangeFilter(object):
         # len(gt_labels_3d) == 1, where mask=1 will be interpreted
         # as gt_labels_3d[1] and cause out of index error
         gt_labels_3d = gt_labels_3d[mask.numpy().astype(np.bool)]
+        attr_labels = attr_labels[mask.numpy().astype(np.bool)]
         instance_inds = instance_inds[mask.numpy().astype(np.bool)]
 
         # limit rad to [-pi, pi]
         gt_bboxes_3d.limit_yaw(offset=0.5, period=2 * np.pi)
         input_dict['gt_bboxes_3d'] = gt_bboxes_3d
         input_dict['gt_labels_3d'] = gt_labels_3d
+        input_dict['attr_labels'] = attr_labels
         input_dict['ann_info']['instance_inds'] = instance_inds
 
         return input_dict

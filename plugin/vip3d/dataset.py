@@ -22,6 +22,7 @@ from mmdet3d.core import show_result
 from mmdet3d.core.bbox import Box3DMode, Coord3DMode, LiDARInstance3DBoxes
 from mmdet3d.core.bbox import get_box_type
 from mmdet3d.datasets.pipelines import Compose
+from mmdet3d.datasets import NuScenesDataset
 from . import utils
 
 
@@ -188,8 +189,7 @@ class NuScenesTrackDatasetRadar(Dataset):
         self.generate_nuscenes_prediction_infos_val = generate_nuscenes_prediction_infos_val
 
     def prepare_nuscenes(self):
-        self.nuscenes = NuScenes('v1.0-mini/', dataroot=self.data_root)
-        # self.nuscenes = NuScenes('v1.0-mini', dataroot=data_root)
+        self.nuscenes = NuScenes('v1.0-trainval/', dataroot=self.data_root)
         self.helper = PredictHelper(self.nuscenes)
         self.maps = load_all_maps(self.helper)
 
@@ -722,8 +722,10 @@ class NuScenesTrackDatasetRadar(Dataset):
             mask = info['valid_flag']
         else:
             mask = info['num_lidar_pts'] > 0
+
         gt_bboxes_3d = info['gt_boxes'][mask]
         gt_names_3d = info['gt_names'][mask]
+        gt_attrs_3d = info['gt_attributes'][mask]
         instance_inds = np.array(info['instance_inds'], dtype=np.int)[mask]
         gt_labels_3d = []
         for cat in gt_names_3d:
@@ -732,7 +734,7 @@ class NuScenesTrackDatasetRadar(Dataset):
             else:
                 gt_labels_3d.append(-1)
         gt_labels_3d = np.array(gt_labels_3d)
-
+        gt_attrs_3d = np.array(gt_attrs_3d)
         if self.with_velocity:
             gt_velocity = info['gt_velocity'][mask]
             nan_mask = np.isnan(gt_velocity[:, 0])
@@ -749,6 +751,7 @@ class NuScenesTrackDatasetRadar(Dataset):
         anns_results = dict(
             gt_bboxes_3d=gt_bboxes_3d,
             gt_labels_3d=gt_labels_3d,
+            attr_labels=gt_attrs_3d,
             gt_names=gt_names_3d,
             instance_inds=instance_inds)
         return anns_results
@@ -812,8 +815,9 @@ class NuScenesTrackDatasetRadar(Dataset):
         if input_dict is None:
             return None
         self.pre_pipeline(input_dict)
+        
         example = self.pipeline_single(input_dict)
-
+        assert input_dict['ann_info']['gt_labels_3d'].shape == input_dict['ann_info']['attr_labels'].shape
         example['instance_inds'] = example['ann_info']['instance_inds']
         if self.filter_empty_gt and \
                 (example is None or
@@ -854,7 +858,6 @@ class NuScenesTrackDatasetRadar(Dataset):
 
             for key, value in data_i.items():
                 ret[key].append(value)
-
         if self.do_pred:
             if True:
                 pred_data = self.prepare_pred(start, end, interval, index)
@@ -866,7 +869,6 @@ class NuScenesTrackDatasetRadar(Dataset):
                 mapping['training_frame_num'] = self.training_frame_num
 
         ret = self.pipeline_post(ret)
-
         return ret
 
     def prepare_pred(self, start, end, interval, index):
