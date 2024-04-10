@@ -989,7 +989,9 @@ class NuScenesTrackDatasetRadar(Dataset):
             if det is None:
                 nusc_annos[sample_token] = annos
                 continue
+            breakpoint()
             boxes = output_to_nusc_box_tracking(det)
+            breakpoint()
             boxes = lidar_nusc_box_to_global(self.data_infos[sample_id], boxes,
                                              mapped_class_names,
                                              self.eval_detection_configs,
@@ -1239,7 +1241,7 @@ class NuScenesTrackingBox(NuScenesBox):
         return copy.deepcopy(self)
 
 
-def output_to_nusc_box_tracking(detection, vis=False):
+def output_to_nusc_box_tracking(detection):
     """Convert the output to the box class in the nuScenes.
     Args:
         detection (dict): Detection results.
@@ -1251,7 +1253,7 @@ def output_to_nusc_box_tracking(detection, vis=False):
     Returns:
         list[:obj:`NuScenesBox`]: List of NuScenesTrackingBoxes.
     """
-    box3d = detection['boxes_3d'] # <class 'mmdet3d.core.bbox.structures.lidar_box3d.LiDARInstance3DBoxes'>
+    box3d = detection['boxes_3d']
 
     # overwrite the scores with the tracking scores
     if 'track_scores' in detection.keys() and detection['track_scores'] is not None:
@@ -1283,8 +1285,6 @@ def output_to_nusc_box_tracking(detection, vis=False):
         # velo_ori = box3d[i, 6]
         # velocity = (
         # velo_val * np.cos(velo_ori), velo_val * np.sin(velo_ori), 0.0)
-        if vis:
-            box_gravity_center[i][2] += box_dims[i][2] * 0.5
         box = NuScenesTrackingBox(
             box_gravity_center[i],
             box_dims[i],
@@ -1354,9 +1354,6 @@ def lidar_nusc_box_to_global(info,
     return box_list
 
 import numpy as np
-import cv2
-from nuscenes.utils.data_classes import Box
-from pyquaternion import Quaternion
 def get_matrix(r, t, inverse = False): 
     output = np.eye(4)
     output[:3, :3] = Quaternion(r).rotation_matrix
@@ -1387,129 +1384,54 @@ def lidar_nusc_box_to_image(info,
         list: List of standard NuScenesBoxes in the global
             coordinate.
     """
+    import cv2
+    img = cv2.imread("a_r_t.jpg")
     box_list = []
-    camera_types = [
-            'CAM_FRONT',
-            'CAM_FRONT_RIGHT',
-            'CAM_FRONT_LEFT',
-            'CAM_BACK',
-            'CAM_BACK_LEFT',
-            'CAM_BACK_RIGHT',
-        ]
-    for cam in camera_types:
-        if cam == 'CAM_FRONT':
-            img = cv2.imread("a_r_t.jpg")
-        else:
-            img = cv2.imread(info['cams'][cam]['data_path'])
+    cams = ['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_FRONT_LEFT']
+    for cam in cams:
         for box in boxes:
-            # box.center[2] += box.wlh[2] * 0.5
-            corners_lidar = box.corners().T # 8*3
-            cam2lidar = np.eye(4)
-            cam2lidar[:3, :3] = info['cams'][cam]['sensor2lidar_rotation']
-            cam2lidar[:3, 3] = info['cams'][cam]['sensor2lidar_translation']
-            lidar2cam = np.linalg.inv(cam2lidar)
+            # Move box to ego vehicle coord system
+            box.rotate(pyquaternion.Quaternion(info['lidar2ego_rotation']))
+            box.translate(np.array(info['lidar2ego_translation']))
+            # Move box to global coord system
+            box.rotate(pyquaternion.Quaternion(info['ego2global_rotation']))
+            box.translate(np.array(info['ego2global_translation']))
+            # 
+            # box.rotate(pyquaternion.Quaternion(info['ego2global_rotation']))
+            # box.translate(np.array(info['ego2global_translation']))
             cam_intrinsic = np.eye(4)
             cam_intrinsic[:3, :3] = info['cams'][cam]['cam_intrinsic']
-            lidar2img = cam_intrinsic @ lidar2cam
-            corners_img = np.concatenate([corners_lidar, np.ones((len(corners_lidar), 1))], axis = 1) @ lidar2img.T
-            corners_img[:, :2] /= corners_img[:, [2]]
-            if np.all(corners_img[:, 2] > 0):
-                for corner in corners_img[:, :2]:
-                    cv2.circle(img, (int(corner[0]), int(corner[1])), 2, (255, 0, 0))
-                edges = [
-                        (0, 1), (1, 2), (2, 3), (3, 0),  # 底部边
-                        (4, 5), (5, 6), (6, 7), (7, 4),  # 顶部边
-                        (0, 4), (1, 5), (2, 6), (3, 7)   # 连接底部和顶部的边
-                ]
-                # 绘制立方体的边
-                for edge in edges:
-                    start_point = (int(corners_img[edge[0], 0]), int(corners_img[edge[0], 1]))
-                    end_point = (int(corners_img[edge[1], 0]), int(corners_img[edge[1], 1]))
-                    output_image = cv2.line(img, start_point, end_point, (255, 0, 0), 1)
-                # cv2.imwrite(f'{cam}.jpg', output_image)
-        for box_ in info['gt_boxes']:
-            box = Box(
-                    center=list(box_[:3]),
-                    size=list(box_[3:6]),
-                    orientation=Quaternion([0,0,0,-(box_[6] + np.pi / 2)])
-                    )
-            center = box_[: 4]
-            center[3] = 1
-            corners_lidar = box.corners().T
-            cam2lidar = np.eye(4)
-            cam2lidar[:3, :3] = info['cams'][cam]['sensor2lidar_rotation']
-            cam2lidar[:3, 3] = info['cams'][cam]['sensor2lidar_translation']
-            lidar2cam = np.linalg.inv(cam2lidar)
-            cam_intrinsic = np.eye(4)
-            cam_intrinsic[:3, :3] = info['cams'][cam]['cam_intrinsic']
-            lidar2img = cam_intrinsic @ lidar2cam
-            corners_img = np.concatenate([corners_lidar, np.ones((len(corners_lidar), 1))], axis = 1) @ lidar2img.T
-            corners_img[:, :2] /= corners_img[:, [2]]
-            center_img = center @ lidar2img.T
-            if center_img[2] > 0:
-                (x, y) = (int(center_img[0] / center_img[2]), int(center_img[1] / center_img[2]))
-                print("-----", (x, y))
-                cv2.circle(img, (x, y), 5, (0, 255, 0))
-            if np.all(corners_img[:, 2] > 0):
-                for corner in corners_img[:, :2]:
-                    print("-----", corner)
-                    cv2.circle(img, (int(corner[0]), int(corner[1])), 2, (0, 0, 255))
-                edges = [
-                        (0, 1), (1, 2), (2, 3), (3, 0),  # 底部边
-                        (4, 5), (5, 6), (6, 7), (7, 4),  # 顶部边
-                        (0, 4), (1, 5), (2, 6), (3, 7)   # 连接底部和顶部的边
-                ]
-                # 绘制立方体的边
-                for edge in edges:
-                    start_point = (int(corners_img[edge[0], 0]), int(corners_img[edge[0], 1]))
-                    end_point = (int(corners_img[edge[1], 0]), int(corners_img[edge[1], 1]))
-                    output_image = cv2.line(img, start_point, end_point, (0, 0, 255), 1)
-            cv2.imwrite(f'{cam}.jpg', output_image)
-                
-    # for cam in cams:
-    #     for box in boxes:
-    #         # Move box to ego vehicle coord system
-    #         box.rotate(pyquaternion.Quaternion(info['lidar2ego_rotation']))
-    #         box.translate(np.array(info['lidar2ego_translation']))
-    #         # Move box to global coord system
-    #         box.rotate(pyquaternion.Quaternion(info['ego2global_rotation']))
-    #         box.translate(np.array(info['ego2global_translation']))
-    #         # 
-    #         # box.rotate(pyquaternion.Quaternion(info['ego2global_rotation']))
-    #         # box.translate(np.array(info['ego2global_translation']))
-    #         cam_intrinsic = np.eye(4)
-    #         cam_intrinsic[:3, :3] = info['cams'][cam]['cam_intrinsic']
-    #         global2ego = get_matrix(info['cams'][cam]['ego2global_rotation'], info['cams'][cam]['ego2global_translation'], True)
-    #         ego2cam = get_matrix(info['cams'][cam]['sensor2ego_rotation'], info['cams'][cam]['sensor2ego_translation'], True)
-    #         global2cam = cam_intrinsic @ ego2cam @ global2ego
+            global2ego = get_matrix(info['cams'][cam]['ego2global_rotation'], info['cams'][cam]['ego2global_translation'], True)
+            ego2cam = get_matrix(info['cams'][cam]['sensor2ego_rotation'], info['cams'][cam]['sensor2ego_translation'], True)
+            global2cam = cam_intrinsic @ ego2cam @ global2ego
             
-    #         corners = box.corners().T
-    #         corners_cam = np.concatenate([corners, np.ones((len(corners), 1))], axis = 1) @ global2cam.T
-    #         corners_cam[:, :2] /= corners_cam[:, [2]]
+            corners = box.corners().T
+            corners_cam = np.concatenate([corners, np.ones((len(corners), 1))], axis = 1) @ global2cam.T
+            corners_cam[:, :2] /= corners_cam[:, [2]]
             
-    # #         cam2lidar_r = info['cams'][cam]['sensor2lidar_rotation']
-    # #         cam2lidar_t = info['cams'][cam]['sensor2lidar_translation']
-    # #         cam_intrinsic = info['cams'][cam]['cam_intrinsic']
-    # #         corners = box.corners().T # 3 * 8
-    # #         cam2lidar = np.eye(4)
-    # #         cam2lidar[:3, :3] = cam2lidar_r
-    # #         cam2lidar[:3, 3] = cam2lidar_t
-    # #         lidar2cam = np.linalg.inv(cam2lidar)
-    # #         cam_intrinsic_ = np.eye(4)
-    # #         cam_intrinsic_[:3, :3] = cam_intrinsic
-    # #         corners_cam = np.concatenate([corners, np.ones((len(corners), 1))], axis = 1) @ lidar2cam.T @ cam_intrinsic_.T
-    # #         corners[:, :2] /= corners[:, [2]]
-    #         flag = 1
-    #         for corner in corners:
-    #             if corner[0] < 0 or corner[1] < 0:
-    #                 flag = 0
-    #                 break
-    #         if flag:
-    #             # breakpoint()
-    #             for corner in corners:
-    #                 print("corners", (int(corner[0]),int(corner[1])))
-    #                 cv2.circle(img, (int(corner[0]),int(corner[1])), 3, (255, 0, 0), -1, 16)
-    #             cv2.imwrite(f"{cam}.jpg", img)
+    #         cam2lidar_r = info['cams'][cam]['sensor2lidar_rotation']
+    #         cam2lidar_t = info['cams'][cam]['sensor2lidar_translation']
+    #         cam_intrinsic = info['cams'][cam]['cam_intrinsic']
+    #         corners = box.corners().T # 3 * 8
+    #         cam2lidar = np.eye(4)
+    #         cam2lidar[:3, :3] = cam2lidar_r
+    #         cam2lidar[:3, 3] = cam2lidar_t
+    #         lidar2cam = np.linalg.inv(cam2lidar)
+    #         cam_intrinsic_ = np.eye(4)
+    #         cam_intrinsic_[:3, :3] = cam_intrinsic
+    #         corners_cam = np.concatenate([corners, np.ones((len(corners), 1))], axis = 1) @ lidar2cam.T @ cam_intrinsic_.T
+    #         corners[:, :2] /= corners[:, [2]]
+            flag = 1
+            for corner in corners:
+                if corner[0] < 0 or corner[1] < 0:
+                    flag = 0
+                    break
+            if flag:
+                # breakpoint()
+                for corner in corners:
+                    print("corners", (int(corner[0]),int(corner[1])))
+                    cv2.circle(img, (int(corner[0]),int(corner[1])), 3, (255, 0, 0), -1, 16)
+                cv2.imwrite(f"{cam}.jpg", img)
     breakpoint()
 
 def get_lanes_in_radius(x: float, y: float, radius: float,
