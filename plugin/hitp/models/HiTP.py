@@ -35,48 +35,6 @@ class_names = [
     'motorcycle', 'bicycle', 'pedestrian',
 ]
 
-def calculate_cube_corners(x, y, z, w, l, h):
-    # 计算立方体的所有八个角点的坐标
-    corners = []
-    
-    w /= 2.0
-    l /= 2.0
-    # 计算其他七个角点的坐标
-    corners.append([x + w, y + l, z + h / 2])
-    corners.append([x + w, y - l, z + h / 2 ])
-    corners.append([x - w, y - l, z + h / 2])
-    corners.append([x - w, y + l, z + h / 2])
-    corners.append([x + w, y + l, z + h + h / 2])
-    corners.append([x + w, y - l, z + h + h / 2])
-    corners.append([x - w, y - l, z + h + h / 2])
-    corners.append([x - w, y + l, z + h + h / 2])
-    
-    return np.array(corners) # default shape: 8 x 3
-    
-def draw_cube_on_image(image, corners):
-    # 创建一个空白图像，与输入图像具有相同的大小和通道数
-    output_image = np.copy(image)
-
-    # 定义立方体的边
-    edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0),  # 底部边
-        (4, 5), (5, 6), (6, 7), (7, 4),  # 顶部边
-        (0, 4), (1, 5), (2, 6), (3, 7)   # 连接底部和顶部的边
-    ]
-
-    # 绘制立方体的边
-    for edge in edges:
-        start_point = tuple(corners[edge[0]].astype(int))
-        end_point = tuple(corners[edge[1]].astype(int))
-        output_image = cv2.line(output_image, start_point, end_point, (0, 255, 0), 2)
-
-    # 绘制立方体的顶点
-    for corner in corners:
-        corner = tuple(corner.astype(int))
-        output_image = cv2.circle(output_image, corner, 5, (0, 0, 255), -1)
-
-    return output_image
-
 class RuntimeTrackerBase(object):
     def __init__(self, score_thresh=None, filter_score_thresh=None, miss_tolerance=5):
         self.score_thresh = score_thresh
