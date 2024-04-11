@@ -574,7 +574,6 @@ class ViP3D(MVXTwoStageDetector):
         Returns:
             dict: Losses of different branches.
         """
-        breakpoint()
         # [T, 3, 3]
         l2g_r_mat = l2g_r_mat[0]
         # change to [T, 1, 3]
@@ -710,7 +709,7 @@ class ViP3D(MVXTwoStageDetector):
                             track_scores.append(track_instances.scores[j].item())
                             track_ids.append(obj_id)
                             track_labels.append(all_track_labels[j])
-                breakpoint()
+
                 if len(agents_indices) > 0:
                     if True:
                         if True:
@@ -1023,43 +1022,7 @@ class ViP3D(MVXTwoStageDetector):
             
             # 'boxes_3d' is in lidar, 'self.track_idx_2_boxes' is in global
             predictor_utils.update_track_idx_2_boxes(self.track_idx_2_boxes, track_ids, boxes_3d, mapping, index)
-            
-#             l2g = np.eye(4)
-#             l2g[:3, :3] = l2g_r2.cpu().numpy()
-#             l2g[:3, 3] = l2g_t2.cpu().numpy()
-#             g2l = np.linalg.inv(l2g)
-            
-#             for track_id, values in self.track_idx_2_boxes.items():
-#                 xyz = values[2].center.reshape(1, 3)
-#                 wlh = values[2].wlh
-#                 xyz_ = np.concatenate([xyz, np.ones((xyz.shape[0], 1))], axis = 1)
-#                 xyz_lidar = xyz_ @ g2l.T 
-#                 xyz_image = xyz_lidar @ lidar2img[0][0]
-#                 x = int(xyz_image[0, 0])
-#                 y = int(xyz_image[0, 1])
-#                 image3 = cv2.circle(image3, (x, y), 3, (255, 0, 0), -1)
-#                 cv2.imwrite("image3.jpg", image3)
-            # for cam_idx in range(6):
-            #     lidar_to_image = lidar2img[0][cam_idx]
-            #     image_idx = images[cam_idx]
-            #     for i in range(boxes_3d.shape[0]):
-            #         x, y, z, w, l, h = boxes_3d[i, :6]
-            #         corners = calculate_cube_corners(x, y, z, w, l, h) # 8 * 3
-            #         corners_lidar = np.concatenate([corners, np.ones((corners.shape[0], 1))], axis = 1) # 8 x 4
-            #         corners_image = corners_lidar @ lidar_to_image.T
-            #         corners_image[:, :2] /= corners_image[:, [2]] # x, y / z
-            #         if (corners_image[:, 2] > 0).all() == True: 
-            #             # 画3d_track_instance
-            #             image_idx = draw_cube_on_image(image_idx, corners_image[:, :2])
-            #             track_id = track_ids[i]
-            #             track_cls = class_names[track_labels[i]]
-            #             pos_1 = tuple(corners_image[6][:2].astype(int))
-            #             pos_2 = tuple(corners_image[5][:2].astype(int))
-            #             # image_idx = cv2.putText(image_idx, "track_id: " + str(track_id), pos_1, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            #             image_idx = cv2.putText(image_idx, track_cls, (pos_1[0] + 10, pos_1[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            #     cv2.imwrite("image_object_%d.jpg"%cam_idx, image_idx)
-            # breakpoint()   
-            # Input 'self.track_idx_2_boxes' is in global, output 'tracked_boxes_list' is in ego
+    
             tracked_scores, tracked_trajs, tracked_boxes_list, tracked_boxes_is_valid_list, categories = \
                 predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, index)
             '''
@@ -1077,7 +1040,6 @@ class ViP3D(MVXTwoStageDetector):
                                                                                    gt_past_trajs, gt_past_trajs_is_valid,
                                                                                    gt_future_trajs, gt_future_trajs_is_valid,
                                                                                    future_frame_num)
-            breakpoint()
             if not valid_pred or len(tracked_boxes_list) == 0:
                 outputs = None
             else:
@@ -1106,7 +1068,6 @@ class ViP3D(MVXTwoStageDetector):
                 pred_outputs = outputs['pred_outputs'][0] # (31, 6, 12, 2)
                 pred_probs = outputs['pred_probs'][0] # (31, 6)
                 pred_outputs_single_traj = []
-                # -----predict trajectory visualize-----
                 
                 if self.relative_pred:
                     normalizers = [predictor_utils.get_normalizer(tracked_boxes_is_valid_list[j], tracked_boxes_list[j])

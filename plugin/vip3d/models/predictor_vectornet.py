@@ -189,7 +189,6 @@ class VectorNet(nn.Module):
                 device=None,
                 **kwargs,
                 ):
-        breakpoint()
         import time
         global starttime
         starttime = time.time()

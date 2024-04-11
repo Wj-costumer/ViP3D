@@ -276,6 +276,7 @@ class NuScenesTrackDatasetRadar(Dataset):
                 data_i['ann_info'] = self.get_ann_info(i)
                 data_i['gt_bboxes_3d'] = data_i['ann_info']['gt_bboxes_3d']
                 data_i['gt_labels_3d'] = data_i['ann_info']['gt_labels_3d']
+                data_i['attr_labels'] = data_i['ann_info']['attr_labels']
                 range_filter(data_i)
                 data_i['instance_inds'] = data_i['ann_info']['instance_inds']
             else:
@@ -340,7 +341,9 @@ class NuScenesTrackDatasetRadar(Dataset):
 
                 gt_bboxes_3d = data_history['gt_bboxes_3d'][i - start].tensor.numpy()
                 gt_labels_3d = data_history['gt_labels_3d'][i - start]
-                assert len(instance_inds) == len(gt_bboxes_3d) == len(gt_labels_3d)
+                attr_labels = data_history['attr_labels'][i - start]
+                
+                assert len(instance_inds) == len(gt_bboxes_3d) == len(gt_labels_3d) == len(attr_labels)
                 if not self.test_mode:
                     assert len(instance_inds) > 0
 
@@ -370,6 +373,8 @@ class NuScenesTrackDatasetRadar(Dataset):
                             future_traj=np.zeros((future_frame_num, 2), dtype=np.float32),
                             future_traj_relative=np.zeros((future_frame_num, 2), dtype=np.float32),
                             future_traj_is_valid=np.zeros(future_frame_num, dtype=np.int32),
+                            future_action = np.zeros(future_frame_num, dtype=np.int32),
+                            future_action_is_valid = np.zeros(future_frame_num, dtype=np.int32),
                             past_traj=np.zeros((past_frame_num, 2), dtype=np.float32),
                             past_traj_is_valid=np.zeros(past_frame_num, dtype=np.int32),
                             category=np.zeros(past_frame_num, dtype=np.int32),
@@ -379,6 +384,8 @@ class NuScenesTrackDatasetRadar(Dataset):
                     def run(future_traj=None,
                             future_traj_relative=None,
                             future_traj_is_valid=None,
+                            future_action=None,
+                            future_action_is_valid=None,
                             past_traj=None,
                             past_traj_is_valid=None,
                             category=None,
@@ -403,13 +410,16 @@ class NuScenesTrackDatasetRadar(Dataset):
 
                             future_traj_relative[i - end] = normalizer(point[:2])
                             future_traj_is_valid[i - end] = 1
+                            
+                            future_action[i - end] = attr_labels[box_idx]
+                            future_action_is_valid[i - end] = 1
                             if not same_scene:
                                 future_traj_is_valid[i - end] = 0
-
+                                future_action_is_valid[i - end] = 0
                             # if not same_scene and i > self.last_index:
                             #     future_traj_is_valid[i - end] = 0
                         pass
-
+                        # breakpoint()
                     run(**instance_idx_2_labels[instance_idx])
 
         instance_inds = None
