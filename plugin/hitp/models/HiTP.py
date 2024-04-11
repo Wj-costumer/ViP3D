@@ -681,6 +681,8 @@ class HiTP(MVXTwoStageDetector):
                 agents_indices = []
                 labels_list = []
                 labels_is_valid_list = []
+                actions_list = []
+                actions_is_valid_list = []
                 if self.add_branch:
                     track_scores = []
                     track_ids = []
@@ -694,6 +696,8 @@ class HiTP(MVXTwoStageDetector):
                         def run(future_traj=None,
                                 future_traj_relative=None,
                                 future_traj_is_valid=None,
+                                future_action=None,
+                                future_action_is_valid=None,
                                 past_traj=None,
                                 past_traj_is_valid=None,
                                 category=None,
@@ -704,7 +708,8 @@ class HiTP(MVXTwoStageDetector):
                             else:
                                 labels_list.append(future_traj)
                             labels_is_valid_list.append(future_traj_is_valid)
-
+                            actions_list.append(future_action)
+                            actions_is_valid_list.append(future_action_is_valid)
                         run(**instance_idx_2_labels[obj_id])
                         agents_indices.append(j)
 
@@ -748,7 +753,10 @@ class HiTP(MVXTwoStageDetector):
 #                                                               labels_is_valid=[np.array(labels_is_valid_list)],
 #                                                               # agents_indices=np.array(agents_indices, dtype=int),
 #                                                               **kwargs)
-                            loss, outputs, _ = self.predictor(pred_data, **kwargs)
+                            loss_t, loss_a, outputs, _ = self.predictor(pred_data, # for trajectory prediction
+                                                              actions_list=[np.array(actions_list)], # for action prediction
+                                                              actions_is_valid_list=[np.array(actions_is_valid_list)],   
+                                                              **kwargs)
 #                         elif self.only_matched_query:
 #                             output_embedding = output_embedding[torch.tensor(agents_indices, dtype=torch.long, device=device)]
 #                             loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
@@ -765,13 +773,18 @@ class HiTP(MVXTwoStageDetector):
 #                                                               agents_indices=np.array(agents_indices, dtype=int),
 #                                                               **kwargs)
                 else:
-                    loss = None
-
-            if loss is None:
+                    loss_t = None
+                    loss_a = None
+                    
+            if loss_t is None:
                 # zero loss as a placeholder
-                loss = torch.abs(self.empty_linear(torch.zeros(self.embed_dims, device=device, dtype=torch.float))).mean()
+                loss_t = torch.abs(self.empty_linear(torch.zeros(self.embed_dims, device=device, dtype=torch.float))).mean()
 
-            self.criterion.update_prediction_loss(loss)
+            if loss_a is None:
+                # zero loss as a placeholder
+                loss_a = torch.abs(self.empty_linear(torch.zeros(self.embed_dims, device=device, dtype=torch.float))).mean()
+                
+            self.criterion.update_prediction_loss(loss_t, loss_a)
 
         outputs = self.criterion.losses_dict
         return outputs, others_dict

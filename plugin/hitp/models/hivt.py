@@ -84,7 +84,7 @@ class HiVT(nn.Module):
         self.minFDE = None#FDE()
         self.minMR = None#MR()
 
-    def forward(self, data: TemporalData, **kwargs):
+    def forward(self, data: TemporalData, actions_list: list, actions_is_valid_list: list, **kwargs):
         if self.rotate:
             rotate_mat = torch.empty(data.num_nodes, 2, 2, device=self.device)
             sin_vals = torch.sin(data['rotate_angles'])
@@ -109,6 +109,8 @@ class HiVT(nn.Module):
                             device=global_embed.device,
                             labels=data.y, 
                             labels_is_valid=data.padding_mask, 
+                            actions=actions_list,
+                            actions_is_valid=actions_is_valid_list,
                             agents=local_embed,
                             agents_indices=None, 
                             **kwargs)

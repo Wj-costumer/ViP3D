@@ -35,7 +35,6 @@ class DecoderResCat(nn.Module):
 
 
 class Decoder(nn.Module):
-
     def __init__(self,
                  vectornet,
                  variety_loss=False,
@@ -45,6 +44,7 @@ class Decoder(nn.Module):
                  hidden_size=128,
                  future_frame_num=12,
                  mode_num=6,
+                 cls_num=8,
                  do_eval=False,
                  train_pred_probs_only=False,
                  K_is_1=False,
@@ -62,15 +62,16 @@ class Decoder(nn.Module):
         self.goals_2D = goals_2D
         self.future_frame_num = future_frame_num
         self.mode_num = mode_num
+        self.cls_num = cls_num
         self.do_eval = do_eval
         self.train_pred_probs_only = train_pred_probs_only
         self.train_pred_probs_only_values = 270.0 / np.array([1600, 340, 270, 800, 1680, 12000], dtype=float)
-
+    
         self.decoder = DecoderRes(hidden_size, out_features=2)
-
+        
         if self.variety_loss:
             self.variety_loss_decoder = DecoderResCat(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2)
-
+            self.action_loss_decoder = DecoderResCat(hidden_size, hidden_size, out_features=self.future_frame_num * self.cls_num)
             if variety_loss_prob:
                 if self.train_pred_probs_only:
                     self.train_pred_probs_only_decocer = DecoderResCat(hidden_size, hidden_size, out_features=6)
@@ -84,11 +85,19 @@ class Decoder(nn.Module):
         self.reduce_prob_of = reduce_prob_of
         self.rebalance_prob = rebalance_prob
 
-    def forward_variety_loss(self, hidden_states: Tensor, batch_size, inputs: Tensor,
-                            inputs_lengths: List[int], labels_is_valid: List[np.ndarray], loss: Tensor,
-                            DE: np.ndarray, device, labels: List[np.ndarray],
-                            agents: Tensor,
-                            agents_indices=None):
+    def forward_variety_loss(self, hidden_states: Tensor, 
+                             batch_size, inputs: Tensor,
+                             inputs_lengths: List[int], 
+                             labels_is_valid: List[np.ndarray],
+                             actions_is_valid:List[np.ndarray], 
+                             loss: Tensor,
+                             loss_a: Tensor,
+                             DE: np.ndarray, 
+                             device, 
+                             labels: List[np.ndarray], 
+                             actions: List[np.ndarray], 
+                             agents: Tensor,
+                             agents_indices=None):
         """
         :param hidden_states: hidden states of all elements after encoding by global graph (shape [batch_size, -1, hidden_size])
         :param inputs: hidden states of all elements before encoding by global graph (shape [batch_size, 'element num', hidden_size])
@@ -106,8 +115,9 @@ class Decoder(nn.Module):
             else:
                 hidden_states = hidden_states[:, :agent_num, :]
 
+            actions_one_hot = F.one_hot(torch.tensor(actions), num_classes=self.cls_num) # BS * N * future_step -> BS * N * future_step * cls_num
             outputs = self.variety_loss_decoder(hidden_states[:, -1, :, :])
-
+            outputs_a = self.action_loss_decoder(hidden_states[:, -1, :, :])
             if True:
                 if self.train_pred_probs_only:
                     pred_probs = F.log_softmax(self.train_pred_probs_only_decocer(hidden_states), dim=-1)
@@ -116,7 +126,9 @@ class Decoder(nn.Module):
                 outputs = outputs[:, :, :-6].view([batch_size, agent_num, 6, self.future_frame_num, 2])
             else:
                 outputs = outputs.view([batch_size, agent_num, 6, self.future_frame_num, 2])
-
+            outputs_a = outputs_a.view([batch_size, agent_num, self.future_frame_num, self.cls_num])
+            outputs_a_softmax = F.softmax(outputs_a)
+            
         for i in range(batch_size):
             if True:
                 if self.rebalance_prob:
@@ -133,27 +145,13 @@ class Decoder(nn.Module):
                         if labels_is_valid[i][agent_idx, j]:
                             last_valid_index = j
                             break
-                    # if self.K_is_1:
-                    #     argmin = 0
-                    #     if self.K_is_1_constant:
-                    #         past_boxes_list = mapping[i]['past_boxes_list']
-                    #         assert len(past_boxes_list) == agent_num
-                    #         past_boxes = past_boxes_list[agent_idx]
-                    #         if utils.get_dis_point2point(past_boxes[1, :2]) > utils.eps:
-                    #             dis = utils.get_dis_point2point(past_boxes[1, :2], past_boxes[2, :2])
-                    #             for k in range(12):
-                    #                 outputs[i, agent_idx, 0, k, 0] = dis * (k + 1)
-                    #                 outputs[i, agent_idx, 0, k, 1] = 0.
-
-                    #             # outputs[i, agent_idx, 0] = torch.tensor([], , device=device)
-
-                    # else:
+                        
                     argmin = np.argmin(utils.get_dis_point_2_points(gt_points[last_valid_index], utils.to_numpy(outputs[i, agent_idx, :, last_valid_index, :])))
 
                     # argmin = utils.argmin_traj(labels[i][agent_idx], labels_is_valid[i][agent_idx], utils.to_numpy(outputs[i, agent_idx]))
                     loss_ = F.smooth_l1_loss(outputs[i, agent_idx, argmin],
                                              torch.tensor(labels[i][agent_idx], device=device, dtype=torch.float), reduction='none')
-
+                    loss_action = nn.CrossEntropyLoss(outputs_a_softmax[i, agent_idx, :, :], actions_one_hot[i][agent_idx].dtype(torch.float), reduction='none')
                     if self.rebalance_prob:
                         self.rebalance_prob_values[argmin] += 1
 
@@ -161,10 +159,6 @@ class Decoder(nn.Module):
                         if np.random.rand() > self.train_pred_probs_only_values[argmin]:
                             should_train = False
 
-                        # if np.random.randint(0, 50) == 0:
-                        #     torch.set_printoptions(precision=3, sci_mode=False)
-                        #     print('pred_probs[i, agent_idx]', pred_probs[i, agent_idx].exp())
-                        #     print(outputs[i, agent_idx, :, -1])
 
                     if self.reduce_prob_of is not None:
                         if np.random.randint(0, 50) == 0:
@@ -179,16 +173,19 @@ class Decoder(nn.Module):
                         # past_boxes_list = mapping[0]['past_boxes_list']
 
                     loss_ = loss_ * torch.tensor(labels_is_valid[i][agent_idx], device=device, dtype=torch.float).view(self.future_frame_num, 1)
+                    loss_action = loss_action * torch.tensor(actions_is_valid[i][agent_idx], device=device, dtype=torch.float)
                     if labels_is_valid[i][agent_idx].sum() > utils.eps and should_train:
                         loss[i] += loss_.sum() / labels_is_valid[i][agent_idx].sum()
                         loss[i] += F.nll_loss(pred_probs[i, agent_idx].unsqueeze(0), torch.tensor([argmin], device=device))
+                        loss_a[i] += loss_action.sum() / actions_is_valid[i][agent_idx].sum()
                         valid_agent_num += 1
 
                 # print('valid_agent_num', valid_agent_num)
 
                 if valid_agent_num > 0:
                     loss[i] = loss[i] / valid_agent_num
-
+                    loss_a[i] = loss_a[i] / valid_agent_num
+                    
                 if self.rebalance_prob:
                     print(self.rebalance_prob_values)
 
@@ -197,7 +194,7 @@ class Decoder(nn.Module):
             pred_probs=utils.to_numpy(pred_probs),
         )
    
-        return loss.mean(), results, None
+        return loss.mean(), loss_a.mean(), results, None
 
     def forward(self,
                 # mapping: List[Dict],
@@ -208,6 +205,8 @@ class Decoder(nn.Module):
                 device,
                 labels,
                 labels_is_valid,
+                actions,
+                actions_is_valid,
                 agents,
                 agents_indices=None,
                 **kwargs,
@@ -219,18 +218,16 @@ class Decoder(nn.Module):
         :param hidden_states: hidden states of all elements after encoding by global graph (shape [batch_size, 'element num', hidden_size])
         """
         loss = torch.zeros(batch_size, device=device)
+        loss_a = torch.zeros(batch_size, device=device)
         DE = np.zeros([batch_size, self.future_frame_num])
 
         if self.variety_loss:
             if self.rebalance_prob:
                 with torch.no_grad():
-                    return self.forward_variety_loss(hidden_states.unsqueeze(0), batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
+                    return self.forward_variety_loss(hidden_states.unsqueeze(0), batch_size, inputs, inputs_lengths, labels_is_valid, actions_is_valid, loss, loss_a, DE, device, labels, actions, 
                                                     agents=[agents], agents_indices=agents_indices)
             else:
-                return self.forward_variety_loss(hidden_states.unsqueeze(0), batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
+                return self.forward_variety_loss(hidden_states.unsqueeze(0), batch_size, inputs, inputs_lengths, labels_is_valid, actions_is_valid, loss, loss_a, DE, device, labels, actions, 
                                                  agents=[agents], agents_indices=agents_indices)
-        # elif self.dense_decoding:
-        #     return self.forward_dense_decoding(mapping, hidden_states, batch_size, inputs, inputs_lengths, labels_is_valid, loss, DE, device, labels,
-        #                                        agents_indices=agents_indices, agents=agents)
         else:
             assert False
