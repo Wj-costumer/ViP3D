@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 import torch.nn as nn
 from typing import List
-from ..structures import Instances
+from ...vip3d.structures import Instances
 from mmdet.core import build_assigner
 from mmdet.models import build_loss
 from mmdet.models.builder import LOSSES

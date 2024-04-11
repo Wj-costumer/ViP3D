@@ -151,6 +151,12 @@ model = dict(
         lr=0.01,
         weight_decay=1e-3,
         T_max=0,
+        decoder=dict(
+            variety_loss=True,
+            variety_loss_prob=True,
+            hidden_size=128,
+            use_trans=True
+        ),
     ),
     # model training and testing settings
     train_cfg=dict(
@@ -242,7 +248,7 @@ data = dict(
         type=dataset_type,
         num_frames_per_sample=3,
         data_root=data_root,
-        ann_file=data_root + 'nuscenes_tracking_infos_train.pkl',
+        ann_file=data_root + 'nuscenes_tracking_infos_train_mini.pkl',
         pipeline_single=train_pipeline,
         pipeline_post=train_pipeline_post,
         classes=class_names,
@@ -255,13 +261,13 @@ data = dict(
         do_pred=True),
     # ),
     val=dict(type=dataset_type, pipeline_single=test_pipeline, pipeline_post=test_pipeline_post, classes=class_names, modality=input_modality,
-             ann_file=data_root + 'nuscenes_tracking_infos_val.pkl',
+             ann_file=data_root + 'nuscenes_tracking_infos_val_mini.pkl',
              num_frames_per_sample=1,
              do_pred=True),
     test=dict(type=dataset_type, pipeline_single=test_pipeline,
               pipeline_post=test_pipeline_post,
               classes=class_names, modality=input_modality,
-              ann_file=data_root + 'nuscenes_tracking_infos_val.pkl',
+              ann_file=data_root + 'nuscenes_tracking_infos_val_mini.pkl',
               num_frames_per_sample=1,
               do_pred=True))
 

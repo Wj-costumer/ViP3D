@@ -449,9 +449,15 @@ def get_gt_past_future_trajs(instance_idx_2_labels):
     gt_future_trajs = []
     gt_future_trajs_is_valid = []
     gt_categories = []
+    attr_labels = []
+    gt_future_actions = []
+    gt_future_actions_is_valid = []
+    
     for instance_idx in instance_idx_2_labels:
         def run(future_traj=None,
                 future_traj_is_valid=None,
+                future_action=None,
+                future_action_is_valid=None,
                 past_traj=None,
                 past_traj_is_valid=None,
                 category=None,
@@ -459,6 +465,8 @@ def get_gt_past_future_trajs(instance_idx_2_labels):
                 **kwargs):
             gt_past_trajs.append(past_traj)
             gt_past_trajs_is_valid.append(past_traj_is_valid)
+            gt_future_actions.append(future_action)
+            gt_future_actions_is_valid.append(future_action_is_valid)
             gt_future_trajs.append(future_traj)
             gt_future_trajs_is_valid.append(future_traj_is_valid)
             gt_categories.append(category)
@@ -466,7 +474,7 @@ def get_gt_past_future_trajs(instance_idx_2_labels):
         run(**instance_idx_2_labels[instance_idx])
 
     return np.array(gt_past_trajs), np.array(gt_past_trajs_is_valid), np.array(gt_future_trajs), np.array(
-        gt_future_trajs_is_valid), np.array(gt_categories)
+        gt_future_trajs_is_valid), np.array(gt_future_actions), np.array(gt_future_actions_is_valid), np.array(gt_categories)
 
 
 def get_argmin_traj(gt_trajs, gt_trajs_is_valid, pred_traj, pred_traj_is_valid, FDE=False):
@@ -703,18 +711,23 @@ def extract_from_track_idx_2_boxes(track_idx_2_boxes, track_scores, track_ids, t
 def get_labels_for_tracked_trajs(tracked_trajs, past_trajs_is_valid,
                                  gt_past_trajs, gt_past_trajs_is_valid,
                                  gt_future_trajs, gt_future_trajs_is_valid,
+                                 gt_future_actions, gt_future_actions_is_valid,
                                  future_frame_num):
     labels = []
     labels_is_valid = []
+    actions = []
+    actions_is_valid = []
     for j in range(len(tracked_trajs)):
         _, argmin = get_argmin_traj(gt_past_trajs, gt_past_trajs_is_valid, tracked_trajs[j], past_trajs_is_valid[j]) # _, 15
         if argmin is not None:
-            labels.append(gt_future_trajs[argmin]) # 把与tracked_trajs距离最近的gt_past_trajs对应的未来真值轨迹作为预测轨迹的针织
+            labels.append(gt_future_trajs[argmin]) # 把与tracked_trajs距离最近的gt_past_trajs对应的未来真值轨迹作为预测轨迹的GT
             labels_is_valid.append(gt_future_trajs_is_valid[argmin])
+            actions.append(gt_future_actions[argmin])
+            actions_is_valid.append(gt_future_actions_is_valid[argmin])
         else:
             labels.append(np.zeros((future_frame_num, 2)))
             labels_is_valid.append(np.zeros((future_frame_num)))
-    return np.array(labels), np.array(labels_is_valid)
+    return np.array(labels), np.array(labels_is_valid), np.array(actions), np.array(actions_is_valid)
 
 
 def get_normalizer(past_traj_is_valid, past_boxes): # past_boxes.shape = his_frame * 7 

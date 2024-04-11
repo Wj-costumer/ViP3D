@@ -419,7 +419,7 @@ class NuScenesTrackDatasetRadar(Dataset):
                             # if not same_scene and i > self.last_index:
                             #     future_traj_is_valid[i - end] = 0
                         pass
-                        # breakpoint()
+
                     run(**instance_idx_2_labels[instance_idx])
 
         instance_inds = None
@@ -1001,6 +1001,7 @@ class NuScenesTrackDatasetRadar(Dataset):
             if det is None:
                 nusc_annos[sample_token] = annos
                 continue
+
             boxes = output_to_nusc_box_tracking(det)
             boxes = lidar_nusc_box_to_global(self.data_infos[sample_id], boxes,
                                              mapped_class_names,
@@ -1043,6 +1044,9 @@ class NuScenesTrackDatasetRadar(Dataset):
                         tracking_id=box.token,
                         pred_outputs=box.pred_outputs if hasattr(box, 'pred_outputs') else None,
                         pred_probs=box.pred_probs if hasattr(box, 'pred_probs') else None,
+                        pred_actions=box.pred_actions if hasattr(box, 'pred_actions') else None,
+                        gt_actions=box.gt_actions if hasattr(box, 'gt_actions') else None,
+                        actions_is_valid=box.actions_is_valid if hasattr(box, 'actions_is_valid') is not None else None
                     )
                 # print(nusc_anno)
                 annos.append(nusc_anno)
@@ -1226,6 +1230,9 @@ class NuScenesTrackingBox(NuScenesBox):
                  token: str = None,
                  pred_outputs: np.ndarray = None,
                  pred_probs: np.ndarray = None,
+                 pred_actions: np.ndarray = None,
+                 gt_actions: np.ndarray = None,
+                 actions_is_valid: np.ndarray=None
                  ):
         """
         :param center: Center of box given as x, y, z.
@@ -1241,6 +1248,9 @@ class NuScenesTrackingBox(NuScenesBox):
                                                   score, velocity, name, token)
         self.pred_outputs = pred_outputs
         self.pred_probs = pred_probs
+        self.pred_actions = pred_actions
+        self.gt_actions = gt_actions
+        self.actions_is_valid = actions_is_valid
 
     def rotate(self, quaternion: Quaternion) -> None:
         self.center = np.dot(quaternion.rotation_matrix, self.center)
@@ -1274,7 +1284,10 @@ def output_to_nusc_box_tracking(detection, vis=False):
     labels = detection['labels_3d'].numpy()
     pred_outputs_in_ego = detection.get('pred_outputs_in_ego', None)
     pred_probs_in_ego = detection.get('pred_probs_in_ego', None)
-
+    pred_actions = detection.get('pred_actions',None)
+    gt_actions = detection.get('gt_actions', None)
+    actions_is_valid = detection.get('actions_is_valid', None)
+    
     if 'track_ids' in detection.keys() and detection['track_ids'] is not None:
         track_ids = detection['track_ids']
     else:
@@ -1307,6 +1320,9 @@ def output_to_nusc_box_tracking(detection, vis=False):
             token=str(track_ids[i]),
             pred_outputs=pred_outputs_in_ego[i] if pred_outputs_in_ego is not None else None,
             pred_probs=pred_probs_in_ego[i] if pred_probs_in_ego is not None else None,
+            pred_actions=pred_actions[i] if pred_actions is not None else None,
+            gt_actions=gt_actions[i] if gt_actions is not None else None,
+            actions_is_valid=actions_is_valid[i] if actions_is_valid is not None else None
         )
         box_list.append(box)
     return box_list

@@ -8,7 +8,7 @@ from torch import nn, Tensor
 
 from typing import List
 
-from ..structures import Instances
+from ...vip3d.structures import Instances
 
 
 class MemoryBank(nn.Module):

@@ -34,9 +34,31 @@ class DecoderResCat(nn.Module):
         return hidden_states
 
 
+class TransformerDecoder(nn.Module):
+    def __init__(self, hidden_size, in_features, out_features, num_decoder_layers=6, nhead=8, dim_feedforward=256):
+        super(TransformerDecoder, self).__init__()
+        self.hidden_size = hidden_size
+        self.in_features = in_features
+        self.out_features = out_features
+        self.num_decoder_layers = num_decoder_layers
+
+        decoder_layer = nn.TransformerDecoderLayer(d_model=in_features, nhead=nhead, dim_feedforward=dim_feedforward)
+        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
+
+        self.fc_out = nn.Linear(hidden_size, out_features)
+        self.positional_encoding = nn.Parameter(torch.randn(12, 1, hidden_size))
+
+    def forward(self, hidden_embedding):
+        breakpoint()
+        hidden_embedding = hidden_embedding.permute(1, 0, 2) # [bs, n, 128] -> [n, bs, 128]
+        positional_encodings = self.positional_encoding.repeat(1, hidden_embedding.size(1), 1) # [12, bs, 128]
+        output = self.transformer_decoder(tgt=positional_encodings, memory=hidden_embedding).permute(0, 1, 2) # [bs, n, 128]
+        output = self.fc_out(output)
+        return output
+
+
 class Decoder(nn.Module):
     def __init__(self,
-                 vectornet,
                  variety_loss=False,
                  variety_loss_prob=False,
                  nms_threshold=3.0,
@@ -52,6 +74,7 @@ class Decoder(nn.Module):
                  exclude_static=False,
                  reduce_prob_of=None,
                  rebalance_prob=False,
+                 use_trans=False
                  ):
         super(Decoder, self).__init__()
 
@@ -66,16 +89,19 @@ class Decoder(nn.Module):
         self.do_eval = do_eval
         self.train_pred_probs_only = train_pred_probs_only
         self.train_pred_probs_only_values = 270.0 / np.array([1600, 340, 270, 800, 1680, 12000], dtype=float)
-    
-        self.decoder = DecoderRes(hidden_size, out_features=2)
+        if use_trans:
+            self.decoder = TransformerDecoder
+        else:
+            self.decoder = DecoderResCat
         
         if self.variety_loss:
-            self.variety_loss_decoder = DecoderResCat(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2)
+            self.variety_loss_decoder = self.decoder(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2)
             self.action_loss_decoder = DecoderResCat(hidden_size, hidden_size, out_features=self.future_frame_num * self.cls_num)
+
             if variety_loss_prob:
                 if self.train_pred_probs_only:
-                    self.train_pred_probs_only_decocer = DecoderResCat(hidden_size, hidden_size, out_features=6)
-                self.variety_loss_decoder = DecoderResCat(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2 + 6)
+                    self.train_pred_probs_only_decocer = self.decoder(hidden_size, hidden_size, out_features=6)
+                self.variety_loss_decoder = self.decoder(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2 + 6)
         else:
             assert False
 
@@ -105,7 +131,7 @@ class Decoder(nn.Module):
         :param DE: displacement error (shape [batch_size, self.future_frame_num])
         """
         assert batch_size == 1
-
+       
         agent_num = len(agents_indices) if agents_indices is not None else agents[0].shape[0]
         assert agent_num == labels[0].shape[0]
         if True:
@@ -114,21 +140,22 @@ class Decoder(nn.Module):
                 hidden_states = hidden_states[:, agents_indices, :]
             else:
                 hidden_states = hidden_states[:, :agent_num, :]
-
-            actions_one_hot = F.one_hot(torch.tensor(actions), num_classes=self.cls_num) # BS * N * future_step -> BS * N * future_step * cls_num
-            outputs = self.variety_loss_decoder(hidden_states[:, -1, :, :])
-            outputs_a = self.action_loss_decoder(hidden_states[:, -1, :, :])
+      
+            actions_one_hot = F.one_hot(torch.tensor(actions).to(torch.int64), num_classes=self.cls_num) # BS * N * future_step -> BS * N * future_step * cls_num
+            outputs = self.variety_loss_decoder(hidden_states[:, -1, :, :]) # [bs, agent_num, 150]
+            outputs_a = self.action_loss_decoder(hidden_states[:, -1, :, :]) # [bs, agent_num, 96]
             if True:
                 if self.train_pred_probs_only:
                     pred_probs = F.log_softmax(self.train_pred_probs_only_decocer(hidden_states), dim=-1)
                 else:
                     pred_probs = F.log_softmax(outputs[:, :, -6:], dim=-1)
-                outputs = outputs[:, :, :-6].view([batch_size, agent_num, 6, self.future_frame_num, 2])
+                outputs = outputs[:, :, :-6].view([batch_size, agent_num, 6, self.future_frame_num, 2]) # torch.Size([1, 16, 6, 12, 2])
             else:
                 outputs = outputs.view([batch_size, agent_num, 6, self.future_frame_num, 2])
-            outputs_a = outputs_a.view([batch_size, agent_num, self.future_frame_num, self.cls_num])
-            outputs_a_softmax = F.softmax(outputs_a)
-            
+            outputs_a = outputs_a.view([batch_size, agent_num, self.future_frame_num, self.cls_num]) # torch.Size([1, 16, 12, 8])
+        
+        CrossEntropyLoss = nn.CrossEntropyLoss(reduction='none') # initiatize before refer to
+        pred_actions = []
         for i in range(batch_size):
             if True:
                 if self.rebalance_prob:
@@ -141,6 +168,7 @@ class Decoder(nn.Module):
 
                     gt_points = np.array(labels[i][agent_idx]).reshape([self.future_frame_num, 2])
                     last_valid_index = -1
+                
                     for j in range(self.future_frame_num)[::-1]:
                         if labels_is_valid[i][agent_idx, j]:
                             last_valid_index = j
@@ -150,8 +178,10 @@ class Decoder(nn.Module):
 
                     # argmin = utils.argmin_traj(labels[i][agent_idx], labels_is_valid[i][agent_idx], utils.to_numpy(outputs[i, agent_idx]))
                     loss_ = F.smooth_l1_loss(outputs[i, agent_idx, argmin],
-                                             torch.tensor(labels[i][agent_idx], device=device, dtype=torch.float), reduction='none')
-                    loss_action = nn.CrossEntropyLoss(outputs_a_softmax[i, agent_idx, :, :], actions_one_hot[i][agent_idx].dtype(torch.float), reduction='none')
+                                             torch.tensor(labels[i][agent_idx], device=device, dtype=torch.float), reduction='none') # (f_steps, 2)
+                    outputs_a_softmax = F.softmax(outputs_a[i, agent_idx, :, :]) # fut_steps * num_cls
+                    pred_actions.append(torch.argmax(outputs_a_softmax, dim=-1).cpu().numpy()) # convert to pred action labels
+                    loss_action = CrossEntropyLoss(outputs_a_softmax, actions_one_hot[i][agent_idx].to(device, dtype=torch.float)) # (f_steps, 1) 
                     if self.rebalance_prob:
                         self.rebalance_prob_values[argmin] += 1
 
@@ -188,10 +218,13 @@ class Decoder(nn.Module):
                     
                 if self.rebalance_prob:
                     print(self.rebalance_prob_values)
-
+        # breakpoint()
         results = dict(
             pred_outputs=utils.to_numpy(outputs),
             pred_probs=utils.to_numpy(pred_probs),
+            pred_actions=np.array(pred_actions),
+            gt_actions= actions[0],
+            actions_is_valid=actions_is_valid[0]
         )
    
         return loss.mean(), loss_a.mean(), results, None
@@ -231,3 +264,6 @@ class Decoder(nn.Module):
                                                  agents=[agents], agents_indices=agents_indices)
         else:
             assert False
+
+
+

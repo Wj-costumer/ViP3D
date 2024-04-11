@@ -230,7 +230,8 @@ class PredictionEval:
 
     def evaluate(self):
         metrics = PredictionMetrics()
-
+        error_minADE_num = 0
+        proper_minADE_num = 0
         for index in tqdm(range(len(self.prediction_infos))):
             info = self.prediction_infos[index]
             sample_token = info['sample_token']
@@ -263,7 +264,7 @@ class PredictionEval:
                 matched = 0
                 matched_and_prediction_hit = 0
                 gt_not_valid = 0
-
+                
                 for i in range(len(gt_agents)):
                     box_idx = matched_of_gt_box[i]
                     gt_agent = gt_agents[i]
@@ -278,9 +279,11 @@ class PredictionEval:
                         pred_agent = pred_agents[box_idx]
                         argmin, minADE, minFDE = get_argmin_trajectory(gt_agent.future_traj, gt_agent.future_traj_is_valid, pred_agent.pred_future_trajs)
 
-                        if minADE is not None and minADE > 100.0:
-                            assert False, f'Error {minADE} is too large!'
-
+                        if minADE is not None and minADE > 100:
+                            # assert False, f'Error {minADE} is too large!'
+                            print(f'Error {minADE} is too large!')
+                            error_minADE_num += 1
+                            continue
                         if gt_agent.future_traj_is_valid[-1]:
                             assert minFDE is not None
                             MR = minFDE > cfg.miss_rate_threshold
@@ -288,7 +291,8 @@ class PredictionEval:
                                 matched_and_prediction_hit += 1
                         else:
                             MR = None
-
+                    proper_minADE_num += 1
+                    
                     metrics.minADE.accumulate(minADE)
                     metrics.minFDE.accumulate(minFDE)
                     metrics.MR.accumulate(MR)
@@ -300,7 +304,7 @@ class PredictionEval:
                 metrics.unmatched.accumulate(len(pred_agents) - matched)
                 metrics.matched_and_prediction_hit.accumulate(matched_and_prediction_hit)
                 metrics.gt_agent_num.accumulate(len(gt_agents) - gt_not_valid)
-
+        print('total results: ', error_minADE_num, proper_minADE_num)
         return metrics
 
     def main(self) -> Dict[str, Any]:

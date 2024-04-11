@@ -44,7 +44,7 @@ class HiVT(nn.Module):
                  lr: float,
                  weight_decay: float,
                  T_max: int,
-                 decoder=None
+                 decoder=dict
                  ) -> None:
         super(HiVT, self).__init__()
         self.future_steps = future_steps
@@ -75,7 +75,7 @@ class HiVT(nn.Module):
 #                                   future_steps=future_steps,
 #                                   num_modes=num_modes,
 #                                   uncertain=True)
-        self.decoder = Decoder(self, **decoder)
+        self.decoder = Decoder(**decoder)
     
         self.reg_loss = LaplaceNLLLoss(reduction='mean')
         self.cls_loss = SoftTargetCrossEntropyLoss(reduction='mean')

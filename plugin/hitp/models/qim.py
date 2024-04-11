@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from typing import Optional, List
 
 from mmdet.models.utils.transformer import inverse_sigmoid
-from ..structures import Instances
+from ...vip3d.structures import Instances
 
 
 def random_drop_tracks(track_instances: Instances, drop_probability: float) -> Instances:

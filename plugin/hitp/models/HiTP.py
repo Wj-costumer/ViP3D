@@ -25,7 +25,7 @@ from .memory_bank import build_memory_bank
 from .qim import build_qim
 from .radar_encoder import build_radar_encoder
 from .. import utils as predictor_utils
-from ..structures import Instances
+from ...vip3d.structures import Instances
 from .hivt import HiVT
 from ..utils import TemporalData
 from itertools import permutations
@@ -633,7 +633,8 @@ class HiTP(MVXTwoStageDetector):
             device = track_instances.output_embedding.device
 
             if not valid_pred:
-                loss = None
+                loss_t = None
+                loss_a = None
             else:
                 # valid agents which have been matched with GT
                 agents_indices = []
@@ -986,42 +987,6 @@ class HiTP(MVXTwoStageDetector):
             # 'boxes_3d' is in lidar, 'self.track_idx_2_boxes' is in global
             predictor_utils.update_track_idx_2_boxes(self.track_idx_2_boxes, track_ids, boxes_3d, mapping, index)
             
-#             l2g = np.eye(4)
-#             l2g[:3, :3] = l2g_r2.cpu().numpy()
-#             l2g[:3, 3] = l2g_t2.cpu().numpy()
-#             g2l = np.linalg.inv(l2g)
-            
-#             for track_id, values in self.track_idx_2_boxes.items():
-#                 xyz = values[2].center.reshape(1, 3)
-#                 wlh = values[2].wlh
-#                 xyz_ = np.concatenate([xyz, np.ones((xyz.shape[0], 1))], axis = 1)
-#                 xyz_lidar = xyz_ @ g2l.T 
-#                 xyz_image = xyz_lidar @ lidar2img[0][0]
-#                 x = int(xyz_image[0, 0])
-#                 y = int(xyz_image[0, 1])
-#                 image3 = cv2.circle(image3, (x, y), 3, (255, 0, 0), -1)
-#                 cv2.imwrite("image3.jpg", image3)
-            # for cam_idx in range(6):
-            #     lidar_to_image = lidar2img[0][cam_idx]
-            #     image_idx = images[cam_idx]
-            #     for i in range(boxes_3d.shape[0]):
-            #         x, y, z, w, l, h = boxes_3d[i, :6]
-            #         corners = calculate_cube_corners(x, y, z, w, l, h) # 8 * 3
-            #         corners_lidar = np.concatenate([corners, np.ones((corners.shape[0], 1))], axis = 1) # 8 x 4
-            #         corners_image = corners_lidar @ lidar_to_image.T
-            #         corners_image[:, :2] /= corners_image[:, [2]] # x, y / z
-            #         if (corners_image[:, 2] > 0).all() == True: 
-            #             # 画3d_track_instance
-            #             image_idx = draw_cube_on_image(image_idx, corners_image[:, :2])
-            #             track_id = track_ids[i]
-            #             track_cls = class_names[track_labels[i]]
-            #             pos_1 = tuple(corners_image[6][:2].astype(int))
-            #             pos_2 = tuple(corners_image[5][:2].astype(int))
-            #             # image_idx = cv2.putText(image_idx, "track_id: " + str(track_id), pos_1, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            #             image_idx = cv2.putText(image_idx, track_cls, (pos_1[0] + 10, pos_1[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            #     cv2.imwrite("image_object_%d.jpg"%cam_idx, image_idx)
-            # breakpoint()   
-            # Input 'self.track_idx_2_boxes' is in global, output 'tracked_boxes_list' is in ego
             tracked_scores, tracked_trajs, tracked_boxes_list, tracked_boxes_is_valid_list, categories = \
                 predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, index)
             '''
@@ -1032,19 +997,20 @@ class HiTP(MVXTwoStageDetector):
                 labels: (31, 12, 2)
                 labels_is_valid: (31, 12)
             '''
-            gt_past_trajs, gt_past_trajs_is_valid, gt_future_trajs, gt_future_trajs_is_valid, gt_categories = \
+            gt_past_trajs, gt_past_trajs_is_valid, gt_future_trajs, gt_future_trajs_is_valid, gt_future_actions, gt_future_actions_is_valid, gt_categories = \
                 predictor_utils.get_gt_past_future_trajs(instance_idx_2_labels)
 
-            labels, labels_is_valid = predictor_utils.get_labels_for_tracked_trajs(tracked_trajs, tracked_boxes_is_valid_list,
+            labels, labels_is_valid, actions, actions_is_valid = predictor_utils.get_labels_for_tracked_trajs(tracked_trajs, tracked_boxes_is_valid_list,
                                                                                    gt_past_trajs, gt_past_trajs_is_valid,
                                                                                    gt_future_trajs, gt_future_trajs_is_valid,
+                                                                                   gt_future_actions, gt_future_actions_is_valid,
                                                                                    future_frame_num)
             if not valid_pred or len(tracked_boxes_list) == 0:
                 outputs = None
             else:
-                if output_embedding is not None:
+                if output_embedding is not None: # [agent_num, 256]
                     if self.add_branch:
-                        query = self.add_branch_update_query(output_embedding, boxes_3d[:, :3], device)
+                        query = self.add_branch_update_query(output_embedding, boxes_3d[:, :3], device) 
                         output_embedding = output_embedding + query
 
                     output_embedding = self.output_embedding_forward(output_embedding)
@@ -1059,23 +1025,19 @@ class HiTP(MVXTwoStageDetector):
                         x = output_embedding,
                         positions=None,
                         edge_index= torch.LongTensor(list(permutations(range(num_agent), 2))).t().contiguous(),
-                        y=labels,
+                        y=[labels],
                         num_nodes=num_agent,
-                        padding_mask=labels_is_valid,
+                        padding_mask=[labels_is_valid],
                         bos_mask=None,
                         rotate_angles=None,
                         lane_vectors=None,
                         is_intersections=None,
                         turn_directions=None,
                     )
-                    outputs, _ = self.predictor(pred_data)
-                    # loss, outputs, _ = self.predictor(agents=output_embedding.unsqueeze(0),
-                    #                                   device=device,
-                    #                                   labels=[labels],
-                    #                                   labels_is_valid=[labels_is_valid],
-                    #                                   agents_indices=None,
-                    #                                   mapping=[mapping],
-                    #                                   **kwargs)
+                    _, _, outputs, _ = self.predictor(pred_data,
+                                                actions_list=[actions], # for action prediction
+                                                actions_is_valid_list=[actions_is_valid],   
+                                                **kwargs)
 
             pred_dict = None
             if outputs is not None:
@@ -1094,7 +1056,7 @@ class HiTP(MVXTwoStageDetector):
                         pred_outputs_single_traj.append(pred_outputs[j, argmax])
                         pred_outputs[j] = normalizers[j](pred_outputs[j], reverse=True)
 
-                self.add_pred_results(results[0], pred_outputs, pred_probs)
+                self.add_pred_results(results[0], pred_outputs, pred_probs, outputs['pred_actions'], outputs['gt_actions'], outputs['actions_is_valid'])
 
                 pred_dict = dict(
                     instance_idx_2_labels=instance_idx_2_labels,
@@ -1110,9 +1072,12 @@ class HiTP(MVXTwoStageDetector):
 
         return results
 
-    def add_pred_results(self, result_dict, pred_outputs, pred_probs):
+    def add_pred_results(self, result_dict, pred_outputs, pred_probs, pred_actions, gt_actions, actions_is_valid):
         result_dict['pred_outputs_in_ego'] = pred_outputs
         result_dict['pred_probs_in_ego'] = pred_probs
+        result_dict['pred_actions'] = pred_actions
+        result_dict['gt_actions'] = gt_actions
+        result_dict['actions_is_valid'] = actions_is_valid
 
     def _active_instances2results(self, active_instances, img_metas, do_train=False):
         '''
