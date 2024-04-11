@@ -885,23 +885,8 @@ class ViP3D(MVXTwoStageDetector):
         l2g_t = l2g_t[0].unsqueeze(dim=1)[0]
 
         bs = img.size(0)
-        h = img.size(4) # img shape (928, 1600, 3)
-        w = img.size(5)
-        num_frame = img.size(1)
 
-        # 恢复原始图像
-        mean = np.array([103.530, 116.280, 123.675])  # 均值
-        std = np.array([1.0, 1.0, 1.0])  # 标准差
-        # 读取图像
-        image1 = mmcv.imdenormalize(np.transpose(img[0, 0, 0, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image2 = mmcv.imdenormalize(np.transpose(img[0, 0, 1, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image3 = mmcv.imdenormalize(np.transpose(img[0, 0, 2, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image4 = mmcv.imdenormalize(np.transpose(img[0, 0, 3, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image5 = mmcv.imdenormalize(np.transpose(img[0, 0, 4, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        image6 = mmcv.imdenormalize(np.transpose(img[0, 0, 5, :, :, :].cpu().numpy(), (1, 2, 0)), mean, std, to_bgr=False)
-        imgs = np.vstack((np.hstack((image2, image1, image3)), np.hstack((image5, image4, image6))))
-        cv2.imwrite("test.jpg", imgs)
-        images = [image1, image2, image3, image4, image5, image6]
+        num_frame = img.size(1)
         
         timestamp = timestamp[0]
         device = img.device
@@ -943,19 +928,7 @@ class ViP3D(MVXTwoStageDetector):
 
         # for bs 1;
         lidar2img = img_metas[0]['lidar2img']  # [T, num_cam] img_metas[0]['lidar2img'][0][0-5].shape = (4, 4)
-        
-        points_lidar = np.concatenate([points[0][0][:, :3].cpu().numpy(), np.ones((points[0][0].shape[0], 1))], axis = 1) # (34752, 4)
        
-        # 保存将lidar points映射到图像上的结果
-        # for i in range(len(lidar2img[0])): # default = 6
-        #     lidar_to_image = lidar2img[0][i]
-        #     image_idx = images[i]
-        #     points_image = points_lidar @ lidar_to_image.T
-        #     points_image[:, :2] /= points_image[:, [2]] # x , y / z
-        #     for x, y in points_image[points_image[:, 2] > 0, :2]:
-        #         image_with_points = cv2.circle(image_idx, (int(x), int(y)), 2, (255, 0, 0), -1)
-        #     cv2.imwrite("image_%d_with_points.jpg"%i, image_with_points)
-        
         for i in range(num_frame):
             points_single = [p_[i] for p_ in points]
             img_single = torch.stack([img_[i] for img_ in img], dim=0)
