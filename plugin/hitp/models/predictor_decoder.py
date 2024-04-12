@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
-
+import math
 from .predictor_lib import PointSubGraph, GlobalGraphRes, CrossAttention, GlobalGraph, MLP
 from .. import utils as utils
 
@@ -34,28 +34,50 @@ class DecoderResCat(nn.Module):
         return hidden_states
 
 
-class TransformerDecoder(nn.Module):
-    def __init__(self, hidden_size, in_features, out_features, num_decoder_layers=6, nhead=8, dim_feedforward=256):
-        super(TransformerDecoder, self).__init__()
-        self.hidden_size = hidden_size
-        self.in_features = in_features
-        self.out_features = out_features
-        self.num_decoder_layers = num_decoder_layers
+class TrajectoryTransformerDecoder(nn.Module):
+    def __init__(self, feature_dim, output_dim, num_heads=8, num_decoder_layers=6, num_trajectories=6, num_timesteps=12, dim_feedforward=512):
+        super(TrajectoryTransformerDecoder, self).__init__()
+        self.feature_dim = feature_dim
+        self.num_trajectories = num_trajectories
+        self.num_timesteps = num_timesteps
+        self.dim_feedforward = dim_feedforward
+        self.output_dim = output_dim
+        self.positional_encoding = PositionalEncoding(feature_dim)
 
-        decoder_layer = nn.TransformerDecoderLayer(d_model=in_features, nhead=nhead, dim_feedforward=dim_feedforward)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=feature_dim, nhead=num_heads, dim_feedforward=dim_feedforward)
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
 
-        self.fc_out = nn.Linear(hidden_size, out_features)
-        self.positional_encoding = nn.Parameter(torch.randn(12, 1, hidden_size))
+        self.output_projection = nn.Linear(feature_dim, output_dim) # 输出维度为num_trajectories*num_timesteps*2 + 6
 
-    def forward(self, hidden_embedding):
-        breakpoint()
-        hidden_embedding = hidden_embedding.permute(1, 0, 2) # [bs, n, 128] -> [n, bs, 128]
-        positional_encodings = self.positional_encoding.repeat(1, hidden_embedding.size(1), 1) # [12, bs, 128]
-        output = self.transformer_decoder(tgt=positional_encodings, memory=hidden_embedding).permute(0, 1, 2) # [bs, n, 128]
-        output = self.fc_out(output)
-        return output
+    def forward(self, src):
+        # breakpoint()
+        # src: (bs, n, 128)
+        bs, n, _ = src.size()
+        src = src.permute(1, 0, 2)  # 调整为(n, bs, 128)以符合PyTorch的Transformer期望的输入维度
+        src = self.positional_encoding(src)
 
+        memory = torch.zeros((n, bs, self.feature_dim)).to(src.device)
+        output = self.transformer_decoder(src, memory)
+        output = self.output_projection(output)
+
+        return output.permute(1, 0, 2)
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        # Create a long enough positional encoding
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        # Register as buffer to avoid being considered a model parameter
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:x.size(0), :]
+        return x
 
 class Decoder(nn.Module):
     def __init__(self,
@@ -90,18 +112,24 @@ class Decoder(nn.Module):
         self.train_pred_probs_only = train_pred_probs_only
         self.train_pred_probs_only_values = 270.0 / np.array([1600, 340, 270, 800, 1680, 12000], dtype=float)
         if use_trans:
-            self.decoder = TransformerDecoder
+            self.decoder = TrajectoryTransformerDecoder
         else:
             self.decoder = DecoderResCat
         
-        if self.variety_loss:
-            self.variety_loss_decoder = self.decoder(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2)
+        if self.variety_loss: 
+            
             self.action_loss_decoder = DecoderResCat(hidden_size, hidden_size, out_features=self.future_frame_num * self.cls_num)
 
             if variety_loss_prob:
                 if self.train_pred_probs_only:
                     self.train_pred_probs_only_decocer = self.decoder(hidden_size, hidden_size, out_features=6)
-                self.variety_loss_decoder = self.decoder(hidden_size, hidden_size, out_features=6 * self.future_frame_num * 2 + 6)
+                out_features = 6 * self.future_frame_num * 2 + 6
+            else:
+                out_features = 6 * self.future_frame_num * 2
+            if use_trans:
+                self.variety_loss_decoder = self.decoder(feature_dim=hidden_size, output_dim=out_features)
+            else:
+                self.variety_loss_decoder = self.decoder(hidden_size, hidden_size, out_features=out_features)
         else:
             assert False
 
@@ -111,7 +139,7 @@ class Decoder(nn.Module):
         self.reduce_prob_of = reduce_prob_of
         self.rebalance_prob = rebalance_prob
 
-    def forward_variety_loss(self, hidden_states: Tensor, 
+    def forward_variety_loss(self, hidden_states: Tensor, # torch.Size([1, 6, 11, 128])
                              batch_size, inputs: Tensor,
                              inputs_lengths: List[int], 
                              labels_is_valid: List[np.ndarray],
@@ -131,7 +159,7 @@ class Decoder(nn.Module):
         :param DE: displacement error (shape [batch_size, self.future_frame_num])
         """
         assert batch_size == 1
-       
+        breakpoint()
         agent_num = len(agents_indices) if agents_indices is not None else agents[0].shape[0]
         assert agent_num == labels[0].shape[0]
         if True:
@@ -253,7 +281,6 @@ class Decoder(nn.Module):
         loss = torch.zeros(batch_size, device=device)
         loss_a = torch.zeros(batch_size, device=device)
         DE = np.zeros([batch_size, self.future_frame_num])
-
         if self.variety_loss:
             if self.rebalance_prob:
                 with torch.no_grad():

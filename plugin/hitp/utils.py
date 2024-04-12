@@ -707,6 +707,70 @@ def extract_from_track_idx_2_boxes(track_idx_2_boxes, track_scores, track_ids, t
 
     return np.array(tracked_scores), np.array(tracked_trajs), np.array(past_boxes_list), np.array(past_trajs_is_valid), np.array(categories)
 
+def extract_from_track_idx_2_boxes_in_lidar(track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, index):
+    tracked_scores = []
+    tracked_trajs = []
+    past_boxes_list = []
+    past_trajs_is_valid = []
+    categories = []
+
+    cur_e2g_t = mapping['cur_e2g_t']
+    cur_e2g_r = mapping['cur_e2g_r']
+    cur_l2e_t = mapping['cur_l2e_t']
+    cur_l2e_r = mapping['cur_l2e_r']
+    
+    for j, track_idx in enumerate(track_ids):
+        traj = []
+        past_boxes = []
+        past_traj_is_valid = []
+        category = []
+        score = []
+
+        for i_index in range(index - 2, index + 1): # (0-3)
+            if i_index in track_idx_2_boxes[track_idx]:
+                # TODO
+                # point[2] += box[5] * 0.5
+
+                # l2e_t = frame_index_2_mapping[i_index]['cur_l2e_t']
+                # l2e_r = frame_index_2_mapping[i_index]['cur_l2e_r']
+                # e2g_t = frame_index_2_mapping[i_index]['cur_e2g_t']
+                # e2g_r = frame_index_2_mapping[i_index]['cur_e2g_r']
+
+                if True:
+                    box = track_idx_2_boxes[track_idx][i_index]
+                    # box = get_transform_and_rotate_box(box, l2e_t, l2e_r)
+                    # box = get_transform_and_rotate_box(box, e2g_t, e2g_r)
+                    box = get_transform_and_rotate_box(box, cur_e2g_t, cur_e2g_r, reverse=True)
+                    box = get_transform_and_rotate_box(box, cur_l2e_t, cur_l2e_r, reverse=True)
+                    traj.append(box.center[:2].copy())
+                    past_boxes.append(get_array_from_box(box).copy())
+                else:
+                    box = track_idx_2_boxes[track_idx][i_index]
+
+                    point = box[:3].copy()
+
+                    point = get_transform_and_rotate(point, cur_l2e_t, cur_l2e_r)
+
+                    traj.append(point[:2].copy())
+                    past_boxes.append(np.concatenate((point, box[3:7])))
+
+                past_traj_is_valid.append(1)
+                category.append(track_labels[j])
+                score.append(track_scores[j])
+            else:
+                traj.append(np.zeros(2))
+                past_boxes.append(np.zeros(7))
+                past_traj_is_valid.append(0)
+                category.append(-1)
+                score.append(0.)
+
+        tracked_scores.append(np.array(score))
+        tracked_trajs.append(np.array(traj))
+        past_boxes_list.append(np.array(past_boxes))
+        past_trajs_is_valid.append(np.array(past_traj_is_valid))
+        categories.append(np.array(category))
+
+    return np.array(tracked_scores), np.array(tracked_trajs), np.array(past_boxes_list), np.array(past_trajs_is_valid), np.array(categories)
 
 def get_labels_for_tracked_trajs(tracked_trajs, past_trajs_is_valid,
                                  gt_past_trajs, gt_past_trajs_is_valid,

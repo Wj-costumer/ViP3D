@@ -523,7 +523,7 @@ class HiTP(MVXTwoStageDetector):
                 Defaults to None.
             lidar2img = img_metas[bs]['lidar2img'] of shape [3, 6, 4, 4]. list
                 of list of list of 4x4 array
-            gt_bboxes_3d (list[list[:obj:`BaseInstance3DBoxes`]], optional):
+            gt_bboxes_3d (list[list[:obj:`LiDARInstance3DBoxes`]], optional):
                 Ground truth 3D boxes. Defaults to None.
             gt_labels_3d (list[list[torch.Tensor]], optional): Ground truth labels
                 of 3D boxes. Defaults to None.
@@ -535,7 +535,6 @@ class HiTP(MVXTwoStageDetector):
         Returns:
             dict: Losses of different branches.
         """
-
         # [T, 3, 3]
         l2g_r_mat = l2g_r_mat[0]
         # change to [T, 1, 3]
@@ -553,7 +552,7 @@ class HiTP(MVXTwoStageDetector):
             gt_instances = Instances((1, 1))
             boxes = gt_bboxes_3d[0][i].tensor.to(img.device)
             # normalize gt bboxes here!
-            boxes = normalize_bbox(boxes, self.pc_range)
+            boxes = normalize_bbox(boxes, self.pc_range) # 中心坐标不变 wlh.log()
 
             gt_instances.boxes = boxes
             gt_instances.labels = gt_labels_3d[0][i]
@@ -607,7 +606,7 @@ class HiTP(MVXTwoStageDetector):
                     track_ids = []
                     decoded_boxes = []
 
-                    all_decoded_boxes = predictor_utils.to_numpy(predictor_utils.get_decoded_boxes(track_instances.pred_boxes, self.pc_range, img_metas).tensor)
+                    all_decoded_boxes = predictor_utils.to_numpy(predictor_utils.get_decoded_boxes(track_instances.pred_boxes, self.pc_range, img_metas).tensor) # pred_boxes(z-h/2) -> LiDARInstance3DBoxes
                     for j in range(len(track_instances)):
                         obj_id = track_instances.obj_idxes[j].item()
                         if obj_id != -1 and obj_id != -2:
@@ -624,7 +623,7 @@ class HiTP(MVXTwoStageDetector):
                     # mapping must use last mapping
                     r_index_2_rotation_and_transform = mapping['r_index_2_rotation_and_transform']
                     if valid_pred:
-                        predictor_utils.update_track_idx_2_boxes(self.track_idx_2_boxes, track_ids, decoded_boxes, r_index_2_rotation_and_transform[i], i)
+                        predictor_utils.update_track_idx_2_boxes(self.track_idx_2_boxes, track_ids, decoded_boxes, r_index_2_rotation_and_transform[i], i) # 解码后的历史boxes转换到对应历史帧的global坐标系下
                         predictor_utils.update_track_idx_2_boxes_in_lidar(self.track_idx_2_boxes_in_lidar, track_ids, decoded_boxes, r_index_2_rotation_and_transform[i], i)
 
         if self.do_pred:
@@ -685,12 +684,13 @@ class HiTP(MVXTwoStageDetector):
                             if self.add_branch:
                                 output_embedding = output_embedding[torch.tensor(agents_indices, dtype=torch.long, device=device)]
                                 _, _, past_boxes_list_in_lidar, _, _ = \
-                                    predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes_in_lidar, track_scores, track_ids, track_labels, mapping, num_frame - 1)
+                                    predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes_in_lidar, track_scores, track_ids, track_labels, mapping, num_frame - 1) # global2ego
                                 query = self.add_branch_update_query(output_embedding, past_boxes_list_in_lidar[:, -1, :3], device)
                                 output_embedding = output_embedding + query
-
+                            _, _, past_boxes_list, _, _ = predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, num_frame - 1)
+                            breakpoint()
                             output_embedding = self.output_embedding_forward(output_embedding)
-                        
+
                         num_agent = output_embedding.shape[0]
                         pred_data = TemporalData(
                             x = output_embedding,
@@ -986,7 +986,7 @@ class HiTP(MVXTwoStageDetector):
             
             # 'boxes_3d' is in lidar, 'self.track_idx_2_boxes' is in global
             predictor_utils.update_track_idx_2_boxes(self.track_idx_2_boxes, track_ids, boxes_3d, mapping, index)
-            
+            breakpoint()
             tracked_scores, tracked_trajs, tracked_boxes_list, tracked_boxes_is_valid_list, categories = \
                 predictor_utils.extract_from_track_idx_2_boxes(self.track_idx_2_boxes, track_scores, track_ids, track_labels, mapping, index)
             '''
